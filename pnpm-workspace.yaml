@@ -1,0 +1,6 @@
+nodeLinker: hoisted
+enableGlobalVirtualStore: false
+storeDir: work/pnpm-store
+verifyDepsBeforeRun: false
+allowBuilds:
+  esbuild: true
