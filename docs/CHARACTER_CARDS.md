@@ -1,11 +1,11 @@
 # Leivra 人物卡 v1
 
-第一版仅支持 Leivra 自有 JSON；不兼容 SillyTavern 世界书、PNG 卡片或第三方扩展格式。
+支持 Leivra v1 与 Character Card V2 JSON 数据。V2 仅承诺数据兼容，不实现完整的 SillyTavern 执行语义；不支持 PNG 卡片。
 
 ## 使用
 联系人操作统一在侧栏「联系人」下：
 - 点击头像/名称切换独立聊天，背景与状态圆点标识当前联系人。
-- 「添加联系人」选择 Leivra v1 JSON，复用校验后增加联系人并切换会话。
+- 「添加联系人」选择 Leivra v1 或 V2 JSON，复用校验后增加联系人并切换会话。
 - 每名联系人旁的删除按钮打开确认，列明删除范围；取消或 Escape 不删除任何数据。
 - 手机点击聊天标题栏的「打开联系人」按钮，打开同一侧栏；选择或添加成功后收起。
 
@@ -60,3 +60,17 @@ temperature 可选，范围 0–2，当前适配器暂不发送该参数；maxRe
 保存删除结果失败时保留联系人并显示错误；默认联系人删除成功但旧备份清理失败时，会明确显示警告。数据不可读的临时会话不允许删除原数据。
 
 人格卡不控制调度时间；等待时间和输入延后属于应用聊天设置。编辑人物卡不会中断已开始的生成，下一轮使用保存后的版本。Real 发送人格字段和当前会话近期上下文；Mock 仍使用固定测试回复。
+
+## V2 JSON 数据兼容
+
+导入要求 `spec: "chara_card_v2"`、`spec_version: "2.0"`，及 data 下的 name、description、personality、scenario、first_mes、mes_example 字符串；仅 name 不可为空。缺少 extensions 时按规范补 `{}`；其他 V2 元数据允许缺省，并保留其缺省状态。错误类型和不支持的格式版本明确拒绝。
+
+标准 name、description、personality 映射至现有编辑字段；V2 personality 保留为一整段文本，不按旧版每项 500 字符拆分。scenario、mes_example 及暂不支持的字段原样保存。data.extensions.leivra 使用 schemaVersion:1，保存 id、revision、avatar、speakingStyle、relationship、customPrompt、preferences；未指定 ID 时仅在首次导入生成，revision 默认 1。作者 character_version 与本地 revision 独立。导入同 ID 不覆盖既有角色。
+
+本地 Character 的 sourceCardV2 保存完整源 JSON，已支持字段是经过一致性校验的投影。编辑通过唯一适配器更新源字段并重新生成投影；只覆盖已编辑字段及 revision。未知顶层字段、data 字段、世界书及所有未知 extensions（包括 leivra 内未知键）在保存、加载及导出时保留。导出 V2 使用紧凑 JSON，保证大小预算一致；无损指 JSON 数据值，不保留文件缩进或属性顺序。
+
+每张源卡不超过 256 KiB UTF-8，嵌套最多 16 层、总节点最多 10000、单数组最多 1000 项。名称 80 字符，description/scenario 各 8000，personality 10000，mes_example/first_mes 各 12000；已知附加字符串各最多 12000。世界书校验对象、entries 及条目的必需数据类型，但不执行。未知 JSON 保留且不合并到运行时配置；不执行脚本、宏或外部资源请求。Leivra 扩展的头像、风格、关系、补充设定及偏好沿用 v1 约束。
+
+system_prompt 和 post_history_instructions 仅保留，不用于系统提示词替换或历史后追加。开场白、备用开场白、作者备注和世界书不自动注入、不生成聊天记录。后续阶段的 PersonaRenderer 只读取明确允许的人格资料字段。
+
+旧 leivra.data.v1 快照继续可读，不覆盖浏览器已有卡片。含 sourceCardV2 的新快照不能直接交给旧程序校验；回滚程序前应保留当前站点数据和 V2 卡片导出，避免用旧程序写入新快照。

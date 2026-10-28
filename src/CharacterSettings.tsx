@@ -23,13 +23,13 @@ export default function CharacterSettings({ character, onSave }: Props) {
       e.preventDefault(); setError(''); setStatus('')
       try {
         const { id: _id, schemaVersion: _schema, revision: _revision, ...changes } = draft
-        onSave({ ...changes, personality: changes.personality.filter(item => item.trim()) }); setEditing(false); setStatus('已保存')
+        onSave({ ...changes, personality: character.sourceCardV2 ? changes.personality : changes.personality.filter(item => item.trim()) }); setEditing(false); setStatus('已保存')
       } catch (error) { setError(error instanceof Error ? error.message : '人物卡保存失败。') }
     }}>
       <label>名称<input aria-label="名称" value={draft.name} maxLength={80} required onChange={e => field('name', e.target.value)}/></label>
       <label>头像<input aria-label="头像" value={draft.avatar} maxLength={180000} required onChange={e => field('avatar', e.target.value)}/></label>
       <label>身份背景<textarea aria-label="身份背景" value={draft.background} maxLength={8000} onChange={e => field('background', e.target.value)}/></label>
-      <label>性格特征（每行一项）<textarea aria-label="性格特征（每行一项）" value={draft.personality.join('\n')} onChange={e => setDraft(current => ({ ...current, personality: e.target.value.split('\n') }))}/></label>
+      <label>性格特征（每行一项）<textarea aria-label="性格特征（每行一项）" value={draft.personality.join('\n')} onChange={e => setDraft(current => ({ ...current, personality: character.sourceCardV2 ? [e.target.value] : e.target.value.split('\n') }))}/></label>
       <label>语言风格<textarea aria-label="语言风格" value={draft.speakingStyle} maxLength={4000} onChange={e => field('speakingStyle', e.target.value)}/></label>
       <label>关系设定<textarea aria-label="关系设定" value={draft.relationship} maxLength={4000} onChange={e => field('relationship', e.target.value)}/></label>
       <label>人格提示词<textarea aria-label="人格提示词" value={draft.customPrompt} maxLength={12000} onChange={e => field('customPrompt', e.target.value)}/></label>

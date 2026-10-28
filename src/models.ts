@@ -12,6 +12,8 @@ export interface Character {
   relationship: string
   customPrompt: string
   preferences?: { temperature?: number; maxReplyMessages?: number }
+  // Full inert V2 source; the adapter validates its projection against the fields above.
+  sourceCardV2?: import('./characters/cardV2').CardV2
 }
 export interface Conversation {
   id: string
