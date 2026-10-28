@@ -1,8 +1,8 @@
 import { expect, it, vi } from 'vitest'
 import { fixtureCardV2 } from '../../tests/fixtures/cardV2'
 import { addCharacter, editCharacter, exportCharacter, importCharacter, validateCharacter } from './cards'
-import { createInitialData, loadData, saveData } from '../storage'
-import { validateCardV2 } from './cardV2'
+import { createInitialData, DATA_STORAGE_KEY, loadData, saveData } from '../storage'
+import { CARD_LIMIT_BYTES, validateCardV2 } from './cardV2'
 
 it('preserves all unknown V2 JSON through edits, storage and repeated export/import', () => {
   const raw = fixtureCardV2()
@@ -54,6 +54,11 @@ it('does not trust a divergent runtime projection or lose source data when edito
   const card = importCharacter(JSON.stringify(fixtureCardV2()))
   expect(() => validateCharacter({ ...card, name: 'forged' })).toThrow('不一致')
   expect(() => validateCharacter({ ...card, preferences: { temperature: 0.9 } })).toThrow('不一致')
+  for (const preferences of [null, [], { model: 'untrusted' }]) {
+    const forged = structuredClone(card)
+    Object.assign(forged.sourceCardV2!.data.extensions.leivra as object, { preferences })
+    expect(() => validateCharacter(forged)).toThrow()
+  }
   const { id, revision: _revision, schemaVersion: _schema, sourceCardV2: _source, ...fields } = card
   const data = editCharacter(addCharacter(createInitialData([]), card), id, { ...fields, name: '改名' })
   expect(data.characters[1].sourceCardV2?.data.character_book).toEqual(fixtureCardV2().data.character_book)
@@ -68,4 +73,21 @@ it('preserves supported empty strings and defaults missing extensions without lo
     expect(importCharacter(exportCharacter(card)).id).toBe(card.id)
     expect(fetcher).not.toHaveBeenCalled()
   } finally { fetcher.mockRestore() }
+})
+
+it('roundtrips a compact V2 card at the byte limit without inflating its export', () => {
+  const raw = fixtureCardV2()
+  const source = { ...raw, padding: '', data: { ...raw.data, extensions: { leivra: { schemaVersion: 1, id: 'bounded', revision: 1 } } } }
+  source.padding = 'x'.repeat(CARD_LIMIT_BYTES - new TextEncoder().encode(JSON.stringify(source)).length)
+  const card = importCharacter(JSON.stringify(source))
+  expect(new TextEncoder().encode(exportCharacter(card)).length).toBe(CARD_LIMIT_BYTES)
+  expect(importCharacter(exportCharacter(card))).toEqual(card)
+})
+
+it('reports a corrupt persisted V2 source without overwriting data or falling back to the default', () => {
+  const data = addCharacter(createInitialData([]), importCharacter(JSON.stringify(fixtureCardV2())))
+  data.characters[1].sourceCardV2!.data.personality = '损坏后与投影不一致'
+  const raw = JSON.stringify(data), setItem = vi.fn(), removeItem = vi.fn()
+  expect(() => loadData({ getItem: key => key === DATA_STORAGE_KEY ? raw : null, setItem, removeItem })).toThrow('不一致')
+  expect(setItem).not.toHaveBeenCalled(); expect(removeItem).not.toHaveBeenCalled()
 })

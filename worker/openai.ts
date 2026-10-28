@@ -2,9 +2,13 @@ import { buildPrompt, type GenerationInput } from '../src/prompt'
 import { validateModelOutput } from '../src/reply'
 import { record } from '../src/validation'
 import { ApiFailure, readJsonLimited } from './http'
+import { validateGenerationInput } from '../src/apiContract'
 export interface Env { OPENAI_API_KEY?: string; OPENAI_MODEL?: string; OPENAI_MAX_OUTPUT_TOKENS?: string }
-export function responseBody(input:GenerationInput, env:Env) {
-  const prompt=buildPrompt(input)
+export function responseBody(input:unknown, env:Env) {
+  // Revalidate even when called independently of the HTTP handler. Never accept rendered client sections.
+  let prompt
+  try { prompt=buildPrompt(validateGenerationInput(input)) }
+  catch { throw new ApiFailure('BAD_REQUEST',400) }
   const maxTokens=Number(env.OPENAI_MAX_OUTPUT_TOKENS ?? 8192)
   if(!Number.isSafeInteger(maxTokens)||maxTokens<256||maxTokens>32768)throw new ApiFailure('MODEL_CONFIG',503)
   return {
@@ -19,11 +23,12 @@ export function responseBody(input:GenerationInput, env:Env) {
 }
 export async function generateOpenAI(input:GenerationInput, env:Env, signal:AbortSignal, fetcher:typeof fetch=fetch) {
   if(!env.OPENAI_API_KEY?.trim()||!env.OPENAI_MODEL?.trim())throw new ApiFailure('NOT_CONFIGURED',503)
+  const body=responseBody(input,env)
   let response:Response
   try {
     response=await fetcher('https://api.openai.com/v1/responses',{
       method:'POST',headers:{Authorization:'Bearer '+env.OPENAI_API_KEY,'Content-Type':'application/json'},
-      body:JSON.stringify(responseBody(input,env)),signal
+      body:JSON.stringify(body),signal
     })
   } catch(error) {
     if(error instanceof ApiFailure)throw error

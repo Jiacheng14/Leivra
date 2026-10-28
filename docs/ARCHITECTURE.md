@@ -71,3 +71,13 @@ leivra.data.v1 仍为统一快照，原有 characters/conversations/messages/act
 Vitest 用假时钟和伪造 fetch 验证，不请求外部模型。浏览器专项测试使用强制空 bindings 的测试 Worker 验证真实本地运行时/代理，再拦截响应验证队列及长文；即使机器配置了密钥也不能触发付费请求。
 
 后续生产部署仍需身份认证、分布式限制、私有云端数据和部署授权。D1、记忆提取、群聊、推送、语音没有实现。
+
+## Persona Engine 第一阶段（2026-10-28）
+
+src/characters/cardV2.ts 是唯一 V2 数据适配器。完整 sourceCardV2 保存于既有 Character 对象，兼容旧的可选字段缺省；name/background/personality 等是源卡的校验投影。读取时拒绝不一致快照，编辑时从当前源卡更新对应字段，保留未知数据后重新投影。外部卡缺少 ID 时只在导入生成，校验/生成不产生 ID。schemaVersion（内部格式）、extensions.leivra.schemaVersion、revision（本地编辑版本）与 character_version（作者版本）职责独立。
+
+src/persona/PersonaRenderer.ts 是唯一生产人格渲染实现。buildPrompt 只组织上下文，调用该纯函数取得一个 character 段。v1 的六个字段序列化保持原实现一致；V2 补充 scenario 与 examples。示例始终是资料字符串，不解析成历史消息或 system 指令。外部 system_prompt、post_history_instructions、开场白、世界书及未知字段不进入上游模型请求。应用协议明确资料的低信任边界与正常问答能力，渲染后人格限制 128 KiB UTF-8，超限明确失败。
+
+Real provider 只发送 GenerationInput，不发送前端渲染的 sections。Worker 的 HTTP 入口及独立 responseBody 边界校验快照，由同一个 buildPrompt/PersonaRenderer 重建最终请求，不追加前端结果，因此人格只注入一次。客户端身份和会话 ID 校验仅证明提交数据内部一致性，不构成服务端身份认证或所有权证明；仍限本机使用。
+
+ConversationManager 与 MessageScheduler 实现未改。实际生成时按 conversation.characterId 读取最新卡并复制请求输入；已开始请求保持该版本。页面切换不改变后台会话人格，下一次生成（包括显式重试）读取最新已保存版本。人格资料不写入 messages 或 schedulerSnapshots；本地快照的 characters 仍保存用户的完整人物卡。未来关系状态/记忆可通过稳定角色 ID 与独立版本接口关联，本阶段不加入实现或新存储。

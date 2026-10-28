@@ -17,7 +17,8 @@
     "dev:real": "node scripts/dev-real.mjs",
     "typecheck": "tsc --noEmit",
     "test:scheduler:e2e": "node scripts/scheduler-browser-test.mjs",
-    "test:timing:e2e": "node scripts/timing-browser-test.mjs"
+    "test:timing:e2e": "node scripts/timing-browser-test.mjs",
+    "test:persona:e2e": "node scripts/persona-browser-test.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",

@@ -1,4 +1,4 @@
-# Leivra 人物卡 v1
+# Leivra 人物卡
 
 支持 Leivra v1 与 Character Card V2 JSON 数据。V2 仅承诺数据兼容，不实现完整的 SillyTavern 执行语义；不支持 PNG 卡片。
 

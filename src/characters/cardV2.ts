@@ -1,6 +1,7 @@
 import type { Character } from '../models'
 import { newId } from '../ids'
 import { positiveInteger, record, stableId, text } from '../validation'
+import { validatePreferences } from './preferences'
 
 export const CARD_LIMIT_BYTES = 256 * 1024
 export interface CardV2 extends Record<string, unknown> {
@@ -65,6 +66,7 @@ export function validateCardV2(value: unknown): CardV2 {
     if (ext.schemaVersion !== 1) throw new Error('不支持的 Leivra 扩展版本。')
     if (ext.id !== undefined) stableId(ext.id)
     if (ext.revision !== undefined) positiveInteger(ext.revision)
+    validatePreferences(ext.preferences)
     for (const [key, limit] of Object.entries({ avatar: 180000, speakingStyle: 4000, relationship: 4000, customPrompt: 12000 })) {
       if (ext[key] !== undefined) text(ext[key], key, limit)
     }
@@ -82,7 +84,7 @@ export function projectCardV2(source: CardV2): Omit<Character, 'sourceCardV2'> {
     speakingStyle: typeof ext.speakingStyle === 'string' ? ext.speakingStyle : '',
     relationship: typeof ext.relationship === 'string' ? ext.relationship : '',
     customPrompt: typeof ext.customPrompt === 'string' ? ext.customPrompt : '',
-    ...(ext.preferences === undefined ? {} : { preferences: ext.preferences as Character['preferences'] })
+    ...(ext.preferences === undefined ? {} : { preferences: validatePreferences(ext.preferences) })
   }
 }
 

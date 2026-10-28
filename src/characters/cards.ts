@@ -2,6 +2,7 @@ import type { Character, LocalData } from '../models'
 import { createConversation } from '../models'
 import { positiveInteger, record, stableId, text } from '../validation'
 import { CARD_LIMIT_BYTES, fromCardV2, projectCardV2, updateCardV2, validateCardV2 } from './cardV2'
+import { validatePreferences } from './preferences'
 export { CARD_LIMIT_BYTES } from './cardV2'
 export function validateCharacter(value: unknown): Character {
   const v = record(value)
@@ -13,21 +14,7 @@ export function validateCharacter(value: unknown): Character {
   // Local assets or embedded raster images only: imported cards must not phone home.
   if (!/^\/(?!\/)(?!.*\.\.)[a-zA-Z0-9/_.-]+\.(svg|png|jpe?g|webp)$/.test(avatar) && !/^data:image\/(png|jpeg|webp);base64,[a-zA-Z0-9+/]+={0,2}$/.test(avatar)) throw new Error('头像仅支持站点内图片路径或内嵌 PNG/JPEG/WebP。')
   if (!Array.isArray(v.personality) || v.personality.length > 20) throw new Error('性格特征必须为最多 20 项的数组。')
-  let preferences: Character['preferences']
-  if (v.preferences !== undefined) {
-    const p = record(v.preferences)
-    if (Object.keys(p).some(k => !['temperature','maxReplyMessages'].includes(k))) throw new Error('人物偏好包含未知参数。')
-    preferences = {}
-    if (p.temperature !== undefined) {
-      if (typeof p.temperature !== 'number' || !Number.isFinite(p.temperature) || p.temperature < 0 || p.temperature > 2) throw new Error('temperature 必须在 0–2 之间。')
-      preferences.temperature = p.temperature
-    }
-    if (p.maxReplyMessages !== undefined) {
-      const count = positiveInteger(p.maxReplyMessages)
-      if (count > 8) throw new Error('maxReplyMessages 必须在 1–8 之间。')
-      preferences.maxReplyMessages = count
-    }
-  }
+  const preferences = validatePreferences(v.preferences)
   const card: Character = {
     schemaVersion: 1, id: stableId(v.id), revision: positiveInteger(v.revision),
     name: sourceCardV2 ? text(v.name, '名称', 80, true) : text(v.name, '名称', 80, true).trim(), avatar,

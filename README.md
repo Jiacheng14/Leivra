@@ -46,13 +46,14 @@ pnpm preview
 人物卡和会话存于 localStorage 的 leivra.data.v1，旧记录自动关联默认角色；旧键保留为迁移备份，清空默认角色或删除默认联系人时删除。数据未加密，只存在当前浏览器与当前 origin；共用浏览器的人可查看。更换端口、浏览器或设备不会共享。清理浏览器站点数据会丢失记录。无账号、云同步或长期记忆。同一浏览器存储空间由 Web Locks 限定单页写入与调度，其他页面只读，接管时重新加载记录；不提供实时多页同步。模拟回复为关键词规则，不能代表最终 AI 体验。
 
 ## 角色与头像
-在侧栏「联系人」中切换、通过「添加联系人」导入 Leivra v1 JSON，或确认后删除联系人。手机点击标题栏的「打开联系人」使用同一侧栏。聊天设置 → 人物卡保留当前卡的编辑与导出。导入新角色使用不同的稳定 ID，聊天历史随 ID 保存，更名不丢失。详细字段、限制和迁移方式见 docs/CHARACTER_CARDS.md。
-默认卡位于 src/characters/defaultLeivra.ts。默认 SVG 仍为项目原创插画；图片上传尚未实现。Mock 保持默认联系人的旧回复，其他角色使用中性固定模拟回复，自定义提示词在 Mock 中不生效，Real 会发送当前人物设定。
+在侧栏「联系人」中切换、通过「添加联系人」导入 Leivra v1 或 Character Card V2 JSON，或确认后删除联系人。手机点击标题栏的「打开联系人」使用同一侧栏。聊天设置 → 人物卡保留当前卡的编辑与导出。导入新角色使用不同的稳定 ID，聊天历史随 ID 保存，更名不丢失。详细字段、限制和迁移方式见 docs/CHARACTER_CARDS.md。
+默认卡位于 src/characters/leivra.json，通过 defaultLeivra.ts 校验加载。默认 SVG 仍为项目原创插画；图片上传尚未实现。Mock 保持默认联系人的旧回复，其他角色使用中性固定模拟回复，自定义提示词在 Mock 中不生效，Real 会发送当前人物设定。
 
 ## 项目结构
 - src/App.tsx：聊天和设置交互
 - src/models.ts：角色、会话、消息、记忆与模型接口
 - src/characters/：人物卡、校验、JSON 操作与默认 Mock 素材
+- src/persona/PersonaRenderer.ts：唯一人格渲染入口，角色资料作为低信任上下文
 - src/prompt.ts：通用聊天协议和 Prompt Builder
 - src/chat.ts、src/providers/：Mock/Real ModelProvider
 - src/scheduling/、src/reply.ts：独立会话调度、持久化、输出校验与气泡延迟
@@ -123,3 +124,12 @@ pnpm test:timing:e2e
 项目尚未配置 ESLint，因此没有 lint 命令。专项测试启动强制空配置的本地 Worker；假回复通过浏览器拦截提供，不会读取真实密钥，也不能调用 OpenAI。计时专项测试用浏览器伪时钟记录实际 `/api/chat` 请求时点。Windows 沙箱可能阻止 Wrangler 写入用户配置目录，需要允许本地测试运行时访问该目录。
 
 结构化输出参考 [OpenAI 官方文档](https://developers.openai.com/api/docs/guides/structured-outputs)；本地后端变量参考 [Cloudflare 官方文档](https://developers.cloudflare.com/workers/local-development/environment-variables/)。
+
+
+## Persona Engine 第一阶段
+
+人物卡导入支持 Leivra v1 与 Character Card V2 JSON，使用原有联系人入口，不新增页面。V2 的世界书、暂不支持字段和未知扩展保留于源卡；仅允许的人格资料参与请求。system_prompt 与 post_history_instructions 保留但不执行。数据往返保持 JSON 值，详见 docs/CHARACTER_CARDS.md。
+
+默认蕾芙菈文本精确迁移到 JSON，不覆盖浏览器中已保存的人物卡。共享 PersonaRenderer 是唯一人格渲染实现，前端只提交角色快照，Worker 独立校验并构建最终请求；不新增记忆、情绪、主动消息或思考模式控制。
+
+补充回归：`pnpm test:persona:e2e`（先设置 PLAYWRIGHT_BROWSERS_PATH，同上）。该脚本只使用本机前端和拦截假回复。固定的六类人格对照场景、离线验证范围及待授权的 Real 验收见 docs/PERSONA_ACCEPTANCE.md。
