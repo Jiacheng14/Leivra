@@ -27,6 +27,7 @@ export interface Message {
   role: 'user' | 'assistant'
   text: string
   createdAt: number
+  replyIgnored?: true
 }
 // Only a contract in this phase: no extraction or memory persistence is enabled.
 export interface Memory {

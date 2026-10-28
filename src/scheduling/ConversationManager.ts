@@ -2,11 +2,11 @@ import { conversationMessages, createMessage, type LocalData, type ModelProvider
 import { buildPrompt } from '../prompt'
 import { appendMessages } from '../storage'
 import { newId } from '../ids'
-import { MessageScheduler } from './MessageScheduler'
+import { MessageScheduler, MODE_SWITCH_ERROR } from './MessageScheduler'
 import { DEFAULT_CHAT_SETTINGS, validateChatSettings, type ChatSettings } from './settings'
 export class ConversationManager {
   private schedulers = new Map<string, MessageScheduler>()
-  constructor(private provider: ModelProvider, private read: () => LocalData, private write: (data: LocalData) => void | Promise<void>) {}
+  constructor(private provider: ModelProvider, private read: () => LocalData, private write: (data: LocalData, durableFirst?: boolean) => void | Promise<void>) {}
   start() { for (const c of this.read().conversations) this.get(c.id) }
   peek(id: string) { return this.schedulers.get(id) }
   get(id: string): MessageScheduler {
@@ -20,7 +20,7 @@ export class ConversationManager {
         restored.active = {id:newId(),messages:restored.pending,nextIndex:0}
         restored.pending=[];restored.phase='Idle'
       }
-      if (restored.active) restored.error='回复模式已更换，待处理消息未自动发送。可手动重试回复。'
+      if (restored.active) { restored.error=MODE_SWITCH_ERROR; restored.pauseReason='mode-switch' }
     }
     const scheduler: MessageScheduler = new MessageScheduler({
       conversationId: id, characterId: conversation.characterId,
@@ -33,11 +33,15 @@ export class ConversationManager {
         return this.provider.reply(buildPrompt({ character, conversation, turnId, currentMessages,
           recentMessages: conversationMessages(current, conversation).filter(m=>!pending.has(m.id)) }), signal)
       },
-      commit: (snapshot, emitted) => {
+      commit: (snapshot, emitted, ignoredMessageIds) => {
         let current = this.read()
         if (!current.conversations.some(c=>c.id===id)) throw new Error('会话已关闭。')
         if (emitted) current = appendMessages(current, conversation, [emitted])
-        return this.write({ ...current, schedulerSnapshots: [...(current.schedulerSnapshots ?? []).filter(s=>s.conversationId!==id), {...snapshot,providerId:this.provider.id}] })
+        if (ignoredMessageIds) {
+          const ignored = new Set(ignoredMessageIds)
+          current = { ...current, messages: current.messages.map(message => ignored.has(message.id) && message.conversationId === id && message.role === 'user' ? { ...message, replyIgnored: true } : message) }
+        }
+        return this.write({ ...current, schedulerSnapshots: [...(current.schedulerSnapshots ?? []).filter(s=>s.conversationId!==id), {...snapshot,providerId:this.provider.id}] }, ignoredMessageIds !== undefined)
       }
     })
     this.schedulers.set(id, scheduler)
@@ -51,7 +55,7 @@ export class ConversationManager {
   }
   configure(value: ChatSettings) {
     const settings = validateChatSettings(value)
-    this.write({ ...this.read(), chatSettings: settings })
+    this.write({ ...this.read(), chatSettings: settings }, true)
     for (const scheduler of this.schedulers.values()) scheduler.configure(settings)
   }
   cancel(id: string) { this.schedulers.get(id)?.dispose(); this.schedulers.delete(id) }

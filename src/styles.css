@@ -58,3 +58,4 @@
 .chat-timing-settings output { margin-left:auto; }
 .chat-timing-settings input[type=range] { width:100%; accent-color:var(--accent,#78917e); }
 .error-banner button { margin-left:8px; text-decoration:underline; }
+.reply-error-banner{display:flex;align-items:center;gap:8px}.reply-error-banner span{flex:1}.reply-error-banner button{margin-left:0;flex-shrink:0}.reply-error-banner .ignore-button{display:grid;place-items:center;text-decoration:none;padding:3px}.reply-ignored-icon{color:#d64242;vertical-align:middle;margin-left:4px}

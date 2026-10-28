@@ -1,9 +1,10 @@
 import { newId } from '../ids'
 import { replyDelayMs, validateModelOutput } from '../reply'
 import type { Message, ModelOutput } from '../models'
-import { DEFAULT_CHAT_SETTINGS, MAX_ROUND_WAIT_MS, validateChatSettings, type ChatSettings } from './settings'
+import { DEFAULT_CHAT_SETTINGS, validateChatSettings, type ChatSettings, type ValidatedChatSettings } from './settings'
 
 export type ConversationPhase = 'Idle' | 'Collecting' | 'Generating' | 'Dispatching'
+export const MODE_SWITCH_ERROR = '回复模式已更换，待处理消息未自动发送。可手动重试回复。'
 export interface ActiveTurn {
   id: string
   // The round ID stays stable. A deliberate retry gets a new request ID.
@@ -21,6 +22,7 @@ export interface SchedulerSnapshot {
   lastSentAt: number
   active?: ActiveTurn
   error?: string
+  pauseReason?: 'mode-switch'
 }
 interface Options {
   conversationId: string
@@ -30,7 +32,7 @@ interface Options {
   timeoutMs?: number
   generate(messages: readonly Message[], requestId: string, signal: AbortSignal): Promise<ModelOutput>
   // Resolve only after the full snapshot and optional emitted message are durably committed.
-  commit(snapshot: SchedulerSnapshot, emitted?: Message): void | Promise<void>
+  commit(snapshot: SchedulerSnapshot, emitted?: Message, ignoredMessageIds?: readonly string[]): void | Promise<void>
   delayMs?(text: string): number
 }
 export const MAX_PENDING_MESSAGES = 100
@@ -39,7 +41,7 @@ export const REQUEST_TIMEOUT_MS = 65000
 
 export class MessageScheduler {
   private state: SchedulerSnapshot
-  private settings: ChatSettings
+  private settings: ValidatedChatSettings
   private timer?: ReturnType<typeof setTimeout>
   private timeout?: ReturnType<typeof setTimeout>
   private request?: AbortController
@@ -48,6 +50,7 @@ export class MessageScheduler {
   private closed = false
   private paused = false
   private requestStarted = false
+  private ignoring = false
   private writes: Promise<void> | null = null
   constructor(private options: Options) {
     this.settings = validateChatSettings(options.settings ?? DEFAULT_CHAT_SETTINGS)
@@ -55,11 +58,12 @@ export class MessageScheduler {
       conversationId: options.conversationId, characterId: options.characterId,
       phase: 'Idle', pending: [], lastSentAt: 0
     })
+    if (this.state.error === MODE_SWITCH_ERROR) this.state.pauseReason = 'mode-switch'
     // A restored active turn may already have reached the provider. Keep it separate.
     this.requestStarted = Boolean(options.restored?.active)
     if (this.state.phase === 'Generating') {
       this.state.phase = 'Idle'
-      this.state.error = '上次生成已中断，未自动重发。可手动重试回复。'
+      this.state.error = this.state.pauseReason === 'mode-switch' ? MODE_SWITCH_ERROR : '上次生成已中断，未自动重发。可手动重试回复。'
     }
   }
   snapshot(): SchedulerSnapshot { return structuredClone(this.state) }
@@ -97,7 +101,7 @@ export class MessageScheduler {
   }
   async retry() {
     if (this.closed || !this.state.error) return
-    this.state.error = undefined; this.paused = false
+    this.state.error = undefined; this.state.pauseReason = undefined; this.paused = false
     if (!this.state.active) {
       if (await this.commit()) this.schedule()
     } else if (this.state.active.output) {
@@ -107,6 +111,32 @@ export class MessageScheduler {
       this.state.active.requestId = newId()
       await this.generate()
     }
+  }
+  async ignoreModeSwitch() {
+    if (this.closed || this.ignoring || this.state.pauseReason !== 'mode-switch') return false
+    this.ignoring = true
+    const previous = this.snapshot()
+    const ignored = [...this.state.pending, ...(this.state.active?.output ? [] : this.state.active?.messages ?? [])].map(message => message.id)
+    const next = this.snapshot()
+    next.pending = []
+    if (!next.active?.output) next.active = undefined
+    next.phase = next.active ? 'Dispatching' : 'Idle'
+    next.error = undefined
+    next.pauseReason = undefined
+    clearTimeout(this.timer)
+    const saved = await this.commit(undefined, ignored, next)
+    if (!saved || this.closed) {
+      this.state = previous
+      this.paused = false
+      if (previous.phase === 'Dispatching') this.scheduleDispatch()
+      this.ignoring = false
+      return false
+    }
+    this.state = next
+    if (!next.active) { this.generation++; this.requestStarted = false }
+    else this.scheduleDispatch()
+    this.ignoring = false
+    return true
   }
   dispose() {
     this.closed = true; this.generation++
@@ -121,8 +151,8 @@ export class MessageScheduler {
     this.state.phase = 'Collecting'
     return true
   }
-  private commit(emitted?: Message): Promise<boolean> {
-    const snapshot = this.snapshot()
+  private commit(emitted?: Message, ignoredMessageIds?: readonly string[], replacement?: SchedulerSnapshot): Promise<boolean> {
+    const snapshot = replacement ?? this.snapshot()
     const fail = () => {
       if (!this.closed) {
         this.paused = true
@@ -133,11 +163,11 @@ export class MessageScheduler {
     }
     try {
       if (!this.writes) {
-        const result = this.options.commit(snapshot, emitted)
+        const result = this.options.commit(snapshot, emitted, ignoredMessageIds)
         if (!result || typeof result.then !== 'function') return Promise.resolve(true)
         this.writes = result
       } else {
-        this.writes = this.writes.then(() => this.options.commit(snapshot, emitted))
+        this.writes = this.writes.then(() => this.options.commit(snapshot, emitted, ignoredMessageIds))
       }
       const operation = this.writes
       void operation.finally(() => { if (this.writes === operation) this.writes = null }).catch(() => {})
@@ -148,7 +178,7 @@ export class MessageScheduler {
     const base = this.state.lastSentAt + this.settings.replyWaitMs
     const firstSentAt = Math.min(...this.state.pending.map(message => message.createdAt))
     const quietUntil = this.settings.deferWhileTyping ? Math.max(base, this.lastInputAt + this.settings.replyWaitMs) : base
-    return Math.min(firstSentAt + MAX_ROUND_WAIT_MS, quietUntil)
+    return this.settings.maxWaitMs === null ? quietUntil : Math.min(firstSentAt + this.settings.maxWaitMs, quietUntil)
   }
   private schedule() {
     if (this.closed || this.paused || this.state.error || this.state.active || !this.state.pending.length) return
@@ -215,6 +245,7 @@ export class MessageScheduler {
       this.state.pending = []; this.state.phase = 'Idle'; await this.commit(); return
     }
     this.state.error = undefined
+    this.state.pauseReason = undefined
     this.state.phase = this.state.pending.length ? 'Collecting' : 'Idle'
     if (await this.commit()) this.schedule()
   }

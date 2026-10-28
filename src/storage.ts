@@ -56,7 +56,8 @@ export function validateData(value: unknown): LocalData {
     const conversationId = stableId(m.conversationId)
     const characterId = stableId(m.characterId)
     if (conversationById.get(conversationId)?.characterId !== characterId || (m.role !== 'user' && m.role !== 'assistant')) throw new Error('消息所属角色或会话不匹配。')
-    return { id: stableId(m.id), characterId, conversationId, role: m.role, text: text(m.text, '消息', m.role === 'assistant' ? MAX_REPLY_LENGTH : MAX_LENGTH), createdAt: timestamp(m.createdAt) }
+    if (m.replyIgnored !== undefined && (m.replyIgnored !== true || m.role !== 'user')) throw new Error('忽略回复标记格式错误。')
+    return { id: stableId(m.id), characterId, conversationId, role: m.role, text: text(m.text, '消息', m.role === 'assistant' ? MAX_REPLY_LENGTH : MAX_LENGTH), createdAt: timestamp(m.createdAt), ...(m.replyIgnored === true ? { replyIgnored: true as const } : {}) }
   })
   unique(messages.map(m => m.id))
   const schedulerSnapshots = v.schedulerSnapshots === undefined ? undefined : validateSnapshots(v.schedulerSnapshots, conversations)

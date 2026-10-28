@@ -5,7 +5,7 @@ import { modelProvider } from './providers'
 import { conversationMessages, MAX_LENGTH, type Character, type LocalData } from './models'
 import { createInitialData, LEGACY_STORAGE_KEY, loadData, saveData } from './storage'
 import { ConversationManager } from './scheduling/ConversationManager'
-import { DEFAULT_CHAT_SETTINGS, type ChatSettings } from './scheduling/settings'
+import { DEFAULT_CHAT_SETTINGS, validateChatSettings, type ChatSettings } from './scheduling/settings'
 import { PageOwnership } from './pageOwnership'
 
 const READ_ERROR = '本地数据无法读取，原记录不会被覆盖。请通过浏览器设置备份或修复站点数据。'
@@ -30,11 +30,11 @@ export function useChat() {
     if (!owner.current?.isOwner) throw new Error(owner.current?.available ? OWNER_ERROR : LOCK_ERROR)
   }
   function publish(next: LocalData) { latestData.current = next; setData(next) }
-  function write(next: LocalData) {
+  function write(next: LocalData, durableFirst = false) {
     requireStorage()
-    // Keep a failed user message visible in this page, but never report a durable commit.
-    publish(next)
-    try { saveData(next); setError('') }
+    // Sending may keep a failed message visible; ignoring requires one durable state change first.
+    if (!durableFirst) publish(next)
+    try { saveData(next); if (durableFirst) publish(next); setError('') }
     catch (cause) { setError('浏览器无法保存数据，回复已暂停。'); throw cause }
   }
   useEffect(() => {
@@ -146,7 +146,12 @@ export function useChat() {
     try { requireStorage(); void manager.current.get(conversation.id).retry() }
     catch (cause) { setError(cause instanceof Error ? cause.message : OWNER_ERROR) }
   }
+  async function ignoreModeSwitch() {
+    if (!conversation || !manager.current) return
+    try { requireStorage(); await manager.current.get(conversation.id).ignoreModeSwitch() }
+    catch (cause) { setError(cause instanceof Error ? cause.message : OWNER_ERROR) }
+  }
   return { data, character, conversation, messages, error, writable, draft, setDraft, busy, send, activate, importCard, saveCard, clear, deleteContact,
-    chatSettings: data.chatSettings ?? DEFAULT_CHAT_SETTINGS, configure,
-    replyError: currentSnapshot?.error, retry }
+    chatSettings: validateChatSettings(data.chatSettings ?? DEFAULT_CHAT_SETTINGS), configure,
+    replyError: currentSnapshot?.error, canIgnoreModeSwitch: currentSnapshot?.pauseReason === 'mode-switch', retry, ignoreModeSwitch }
 }

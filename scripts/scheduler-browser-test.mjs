@@ -30,7 +30,7 @@ try {
     await page.getByLabel('正在输入时延后回复').check()
     await page.screenshot({path:'test-results/timing-settings-'+width+'.png',fullPage:true})
     await page.getByRole('button',{name:'关闭设置'}).click();await page.reload()
-    assert.deepEqual((await data()).chatSettings,{replyWaitMs:1000,deferWhileTyping:true})
+    assert.deepEqual((await data()).chatSettings,{replyWaitMs:1000,deferWhileTyping:true,maxWaitMs:300000})
     // This reaches actual workerd through Vite. Test wrapper forces empty bindings.
     const initialResponse=page.waitForResponse(r=>r.url().endsWith('/api/chat'))
     await send('无密钥验收')

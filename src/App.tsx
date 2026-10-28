@@ -1,6 +1,6 @@
 import { isRealMode } from './providers'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowDown, ArrowUp, Check, Download, Menu, Moon, Settings2, ShieldCheck, Sun, Trash2, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, CircleAlert, Download, Menu, Moon, Settings2, ShieldCheck, Sun, Trash2, X } from 'lucide-react'
 import { useRegisterSW } from 'virtual:pwa-register/react'
 import { MAX_LENGTH } from './models'
 import { useChat } from './useChat'
@@ -14,7 +14,7 @@ function initialTheme(): 'light' | 'dark' {
 }
 const clock = (time: number) => new Date(time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 export default function App() {
-  const { data, character, conversation, messages, error, writable, draft, setDraft, busy, send: sendMessage, activate, importCard, saveCard, clear: clearMessages, deleteContact, chatSettings, configure, replyError, retry } = useChat()
+  const { data, character, conversation, messages, error, writable, draft, setDraft, busy, send: sendMessage, activate, importCard, saveCard, clear: clearMessages, deleteContact, chatSettings, configure, replyError, canIgnoreModeSwitch, retry, ignoreModeSwitch } = useChat()
   const [theme, setTheme] = useState(initialTheme)
   const [settings, setSettings] = useState(false)
   const [contactsOpen, setContactsOpen] = useState(false)
@@ -76,7 +76,7 @@ export default function App() {
         <button className="icon-button" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} aria-label={theme === 'light' ? '切换深色主题' : '切换浅色主题'}>{theme === 'light' ? <Moon size={20}/> : <Sun size={20}/>}</button>
         <button ref={settingsButton} className="icon-button" aria-label="聊天设置" onClick={() => setSettings(true)}><Settings2 size={20}/></button>
       </header>
-      {replyError && <div role="alert" className="error-banner">{replyError} <button onClick={retry} disabled={!writable}>重试回复</button></div>}
+      {replyError && <div role="alert" className="error-banner reply-error-banner"><span>{replyError}</span><button onClick={retry} disabled={!writable}>重试回复</button>{canIgnoreModeSwitch && <button type="button" className="ignore-button" aria-label="忽略待回复任务" disabled={!writable} onClick={() => void ignoreModeSwitch()}><X size={16}/></button>}</div>}
       {error && <div role="alert" className="error-banner">{error}</div>}
       {needRefresh && <div className="update-banner">有新版本可用 <button onClick={() => void updateServiceWorker(true)}>刷新更新</button><button aria-label="稍后更新" onClick={() => setNeedRefresh(false)}><X size={16}/></button></div>}
       <div ref={feed} className="message-feed" role="log" aria-label="聊天记录" aria-live="polite" onScroll={() => {
@@ -90,7 +90,7 @@ export default function App() {
             {(i === 0 || new Date(messages[i-1].createdAt).toDateString() !== new Date(m.createdAt).toDateString()) && <div className="date-divider">{new Date(m.createdAt).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}</div>}
             <article className={'message-row ' + m.role} aria-label={m.role === 'user' ? '我' : character.name}>
               <img className="avatar" src={m.role === 'assistant' ? character.avatar : '/user.svg'} alt=""/>
-              <div className="message-content"><div className="bubble">{m.text}</div><time dateTime={new Date(m.createdAt).toISOString()}>{clock(m.createdAt)}{m.role === 'user' && <Check size={11} aria-label="已保存到当前会话"/>}</time></div>
+              <div className="message-content"><div className="bubble">{m.text}</div><time dateTime={new Date(m.createdAt).toISOString()}>{clock(m.createdAt)}{m.replyIgnored ? <CircleAlert className="reply-ignored-icon" size={13} aria-label="回复任务已忽略"/> : m.role === 'user' && <Check size={11} aria-label="已保存到当前会话"/>}</time></div>
             </article>
           </div>)}
           {busy && <div className="message-row assistant"><img className="avatar" src={character.avatar} alt=""/><div className="typing" role="status" aria-label={character.name + '正在输入'}><i/><i/><i/></div></div>}
@@ -115,6 +115,8 @@ export default function App() {
       <div className="chat-timing-settings">
         <label htmlFor="reply-wait">回复等待时间 <output>{chatSettings.replyWaitMs / 1000} 秒</output></label>
         <input id="reply-wait" type="range" min="1" max="60" step="0.5" value={chatSettings.replyWaitMs / 1000} disabled={!writable} onChange={e=>configure({...chatSettings, replyWaitMs:Number(e.target.value)*1000})}/>
+        <label htmlFor="max-wait">最大等待时间 <output>{chatSettings.maxWaitMs === null ? '不限' : `${chatSettings.maxWaitMs / 60000} 分钟`}</output></label>
+        <input id="max-wait" type="range" min="1" max="10.5" step="0.5" value={chatSettings.maxWaitMs === null ? 10.5 : chatSettings.maxWaitMs / 60000} disabled={!writable} onChange={e=>configure({...chatSettings, maxWaitMs:Number(e.target.value) === 10.5 ? null : Number(e.target.value)*60000})}/>
         <label><input type="checkbox" checked={chatSettings.deferWhileTyping} disabled={!writable} onChange={e=>configure({...chatSettings,deferWhileTyping:e.target.checked})}/>正在输入时延后回复</label>
       </div>
       <div className="privacy-card"><ShieldCheck size={20}/><div><strong>关于本地记录</strong><p>每个角色仅保留最近 500 条消息，未加密。共用浏览器的人可能查看记录；清理站点数据会使记录丢失。多标签页同步暂未支持。</p></div></div>

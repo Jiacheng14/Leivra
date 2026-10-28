@@ -24,6 +24,10 @@ export function validateSnapshots(value: unknown, conversations: Conversation[])
     const result: SchedulerSnapshot = { conversationId, characterId, phase: v.phase as ConversationPhase, pending: batch(v.pending), lastSentAt: timestamp(v.lastSentAt) }
     if (v.providerId !== undefined) result.providerId = stableId(v.providerId)
     if (v.error !== undefined) result.error = text(v.error, '错误信息', 500, true)
+    if (v.pauseReason !== undefined) {
+      if (v.pauseReason !== 'mode-switch') throw new Error('暂停原因格式错误。')
+      result.pauseReason = 'mode-switch'
+    }
     if (v.active !== undefined) {
       const a = record(v.active), messages = batch(a.messages)
       const output = a.output === undefined ? undefined : validateModelOutput({messages:a.output}).messages

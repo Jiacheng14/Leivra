@@ -53,12 +53,12 @@ export function buildPrompt(input: PromptInput): ModelRequest {
   const { conversation } = input
   const currentMessages = input.currentMessages ?? (input.currentMessage ? [input.currentMessage] : [])
   if (!currentMessages.length || currentMessages.length > 100 || new Set(currentMessages.map(m=>m.id)).size !== currentMessages.length || currentMessages.reduce((n,m)=>n+m.text.length,0)>64000) throw new Error('当前消息组格式错误。')
-  for (const currentMessage of currentMessages) if (conversation.characterId !== character.id || currentMessage.characterId !== character.id || currentMessage.conversationId !== conversation.id || currentMessage.role !== 'user' || !currentMessage.text.trim() || currentMessage.text.length > MAX_LENGTH) throw new Error('当前消息、会话和角色不匹配。')
+  for (const currentMessage of currentMessages) if (conversation.characterId !== character.id || currentMessage.characterId !== character.id || currentMessage.conversationId !== conversation.id || currentMessage.role !== 'user' || currentMessage.replyIgnored || !currentMessage.text.trim() || currentMessage.text.length > MAX_LENGTH) throw new Error('当前消息、会话和角色不匹配。')
   const shared = (input.sharedInformation ?? []).filter(info => info.consent === 'explicit' && (!info.characterIds || info.characterIds.includes(character.id))).map(info => ({ id: info.id, text: info.text }))
   const memories = (input.memories ?? []).filter(m => m.characterId === character.id && m.schemaVersion === 1 && Number.isSafeInteger(m.revision) && m.revision > 0).map(m => ({ id: m.id, revision: m.revision, content: m.content }))
   const seen = new Set<string>()
   const candidates = input.recentMessages.filter(m => {
-    if (m.characterId !== character.id || m.conversationId !== conversation.id || currentMessages.some(current => current.id === m.id) || seen.has(m.id)) return false
+    if (m.replyIgnored || m.characterId !== character.id || m.conversationId !== conversation.id || currentMessages.some(current => current.id === m.id) || seen.has(m.id)) return false
     seen.add(m.id); return true
   }).slice(-50)
   const history: Message[] = []

@@ -101,6 +101,26 @@ describe('message collection',()=>{
     await vi.advanceTimersByTimeAsync(10)
     expect(calls).toEqual([{at:400000,texts:['第一条','中途消息0','中途消息1','中途消息2','中途消息3','中途消息4','最后一条']}])
   })
+  it('honors a custom one-minute cap and recalculates an existing round after a setting change',async()=>{
+    const t=setup({settings:{replyWaitMs:60000,deferWhileTyping:true,maxWaitMs:600000}})
+    await t.scheduler.enqueue(createMessage(t.conversation,'user','A'))
+    await vi.advanceTimersByTimeAsync(40000);t.scheduler.inputActivity()
+    t.scheduler.configure({replyWaitMs:60000,deferWhileTyping:true,maxWaitMs:60000})
+    await vi.advanceTimersByTimeAsync(19990)
+    expect(t.generate).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(10)
+    expect(t.generate).toHaveBeenCalledTimes(1)
+  })
+  it('allows continuous typing beyond five minutes when the cap is unlimited, then waits for quiet',async()=>{
+    const t=setup({settings:{replyWaitMs:60000,deferWhileTyping:true,maxWaitMs:null}})
+    await t.scheduler.enqueue(createMessage(t.conversation,'user','A'))
+    for(let i=0;i<12;i++){await vi.advanceTimersByTimeAsync(30000);t.scheduler.inputActivity()}
+    expect(t.generate).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(59990)
+    expect(t.generate).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(10)
+    expect(t.generate).toHaveBeenCalledTimes(1)
+  })
 })
 describe('per-conversation work',()=>{
   it('joins a message sent while the generating save is pending and restarts its wait',async()=>{
