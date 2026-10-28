@@ -4,3 +4,4 @@ storeDir: work/pnpm-store
 verifyDepsBeforeRun: false
 allowBuilds:
   esbuild: true
+  workerd: true

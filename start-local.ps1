@@ -1,4 +1,5 @@
-param([switch]$Preview)
+param([switch]$Preview, [switch]$Real)
+if ($Preview -and $Real) { throw "Use -Real for the local API development server, without -Preview." }
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 $runner = Get-Command pnpm.cmd -ErrorAction SilentlyContinue
@@ -17,4 +18,4 @@ if ($Preview) {
   & $pnpmPath build
   if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
   & $pnpmPath preview
-} else { & $pnpmPath dev }
+} elseif ($Real) { & $pnpmPath dev:real } else { & $pnpmPath dev }
