@@ -49,6 +49,43 @@ describe('message collection',()=>{
   })
 })
 describe('per-conversation work',()=>{
+  it('waits for async persistence before a request and pauses on rejection',async()=>{
+    const conversation=createConversation('test')
+    let rejectCommit!: (reason?: unknown)=>void
+    const generate=vi.fn(async()=>({messages:['reply']}))
+    const saved:SchedulerSnapshot[]=[]
+    const scheduler=new MessageScheduler({conversationId:conversation.id,characterId:conversation.characterId,
+      generate,commit:state=>{
+        if(state.phase==='Generating')return new Promise<void>((_,reject)=>{rejectCommit=reject})
+        saved.push(state)
+      }})
+    await scheduler.start()
+    await scheduler.enqueue(createMessage(conversation,'user','hello'))
+    await vi.advanceTimersByTimeAsync(3500)
+    expect(saved.at(-1)?.phase).toBe('Collecting')
+    expect(generate).not.toHaveBeenCalled()
+    rejectCommit(new Error('quota'))
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(generate).not.toHaveBeenCalled()
+    expect(scheduler.snapshot().error).toContain('保存失败')
+    scheduler.dispose()
+  })
+  it('keeps the round ID on recovery and uses a new request ID only for manual retry',async()=>{
+    const first=setup({generate:()=>new Promise(()=>{})})
+    await first.scheduler.enqueue(createMessage(first.conversation,'user','A'))
+    await vi.advanceTimersByTimeAsync(3500)
+    const original=first.saved().active!.id
+    first.scheduler.dispose()
+    const retryGenerate=vi.fn(()=>new Promise<{messages:string[]}>(()=>{}))
+    const next=setup({conversationId:first.conversation.id,characterId:first.conversation.characterId,restored:first.saved(),generate:retryGenerate})
+    expect(next.saved().active?.id).toBe(original)
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(retryGenerate).not.toHaveBeenCalled()
+    void next.scheduler.retry(); await vi.advanceTimersByTimeAsync(0)
+    expect(next.saved().active?.id).toBe(original)
+    expect(next.saved().active?.requestId).not.toBe(original)
+    expect(retryGenerate).toHaveBeenCalledTimes(1)
+  })
   it('queues during generation/dispatch without cancelling or overlapping',async()=>{
     let complete!:(v:{messages:string[]})=>void
     const calls:Message[][]=[];let firstSignal:AbortSignal|undefined

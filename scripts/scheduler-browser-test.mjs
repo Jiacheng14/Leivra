@@ -6,11 +6,13 @@ import { startNode,stopChild,waitForServer } from './local-process.mjs'
 process.env.WRANGLER_LOG_PATH=resolve('work/wrangler-logs')
 process.env.WRANGLER_SEND_METRICS='false'
 process.env.CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV='false'
+process.env.LEIVRA_TEST_WORKER_PORT='8791'
 const {unstable_dev}=await import('wrangler')
 let worker,server,browser
 try {
   await mkdir('test-results',{recursive:true})
-  worker=await unstable_dev('tests/runtime-worker.ts',{config:'tests/wrangler.jsonc',local:true,ip:'127.0.0.1',port:8787,logLevel:'error',experimental:{disableExperimentalWarning:true,disableDevRegistry:true,watch:false}})
+  worker=await unstable_dev('tests/runtime-worker.ts',{config:'tests/wrangler.jsonc',local:true,ip:'127.0.0.1',port:8791,logLevel:'error',experimental:{disableExperimentalWarning:true,disableDevRegistry:true,watch:false}})
+  assert.deepEqual(await (await fetch('http://127.0.0.1:8791/__leivra_test_worker')).json(),{testWorker:true})
   server=startNode(['node_modules/vite/bin/vite.js','--mode','real','--host','127.0.0.1','--port','5179','--strictPort'])
   await waitForServer('http://127.0.0.1:5179',server)
   browser=await chromium.launch({headless:true})
@@ -33,8 +35,9 @@ try {
     const initialResponse=page.waitForResponse(r=>r.url().endsWith('/api/chat'))
     await send('无密钥验收')
     const firstResponse=await initialResponse
-    assert.equal(firstResponse.status(),503)
-    assert.equal((await firstResponse.json()).error.code,'NOT_CONFIGURED')
+    const firstBody=await firstResponse.json()
+    assert.equal(firstResponse.status(),503,JSON.stringify(firstBody))
+    assert.equal(firstBody.error.code,'NOT_CONFIGURED')
     await page.getByRole('alert').filter({hasText:'后端尚未配置'}).waitFor()
     assert.equal((await data()).messages.filter(m=>m.role==='assistant').length,2)
     await page.reload();await page.getByRole('alert').filter({hasText:'后端尚未配置'}).waitFor()

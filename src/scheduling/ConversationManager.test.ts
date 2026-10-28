@@ -26,6 +26,40 @@ it('runs the actual mock through the manager, groups messages, preserves setting
   expect(data.chatSettings).toEqual({replyWaitMs:1000,deferWhileTyping:true})
   expect(fetch).not.toHaveBeenCalled();manager.dispose()
 })
+it('keeps the user message in memory and never calls the provider after a failed save',async()=>{
+  let data=createInitialData([])
+  const provider:ModelProvider={id:'real-test',reply:vi.fn(async()=>({messages:['unexpected']}))}
+  const manager=new ConversationManager(provider,()=>data,next=>{
+    data=validateData(next)
+    if(data.messages.some(m=>m.role==='user'))throw new Error('quota')
+  })
+  manager.start()
+  expect(await manager.send(data.conversations[0].id,'keep me')).toBe(false)
+  expect(data.messages.filter(m=>m.role==='user').map(m=>m.text)).toEqual(['keep me'])
+  await vi.advanceTimersByTimeAsync(30000)
+  expect(provider.reply).not.toHaveBeenCalled()
+  expect(manager.peek(data.conversations[0].id)?.snapshot().error).toContain('保存失败')
+  manager.dispose()
+})
+it('waits for the manager writer to confirm the generating snapshot',async()=>{
+  let data=createInitialData([])
+  let confirm!:()=>void
+  const provider:ModelProvider={id:'real-test',reply:vi.fn(async()=>({messages:['ok']}))}
+  const manager=new ConversationManager(provider,()=>data,next=>{
+    if(next.schedulerSnapshots?.[0]?.phase==='Generating') {
+      return new Promise<void>(resolve=>{confirm=()=>{data=validateData(next);resolve()}})
+    }
+    data=validateData(next)
+  })
+  manager.start()
+  await manager.send(data.conversations[0].id,'hello')
+  await vi.advanceTimersByTimeAsync(3500)
+  expect(provider.reply).not.toHaveBeenCalled()
+  expect(data.schedulerSnapshots?.[0]?.phase).toBe('Collecting')
+  confirm(); await vi.advanceTimersByTimeAsync(0)
+  expect(provider.reply).toHaveBeenCalledTimes(1)
+  manager.dispose()
+})
 it('restores remaining long paragraphs without re-requesting or duplicate bubbles',async()=>{
   const long='第一段。\n\n'+'长文'.repeat(5000)+'\n结尾。'
   let data=createInitialData([])

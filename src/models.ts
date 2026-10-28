@@ -56,11 +56,12 @@ export interface LocalData {
   schedulerSnapshots?: import('./scheduling/MessageScheduler').SchedulerSnapshot[]
 }
 export function createConversation(characterId: string): Conversation {
-  return { id: crypto.randomUUID(), characterId, createdAt: Date.now() }
+  return { id: newId(), characterId, createdAt: Date.now() }
 }
 export function createMessage(conversation: Conversation, role: Message['role'], text: string): Message {
-  return { id: crypto.randomUUID(), conversationId: conversation.id, characterId: conversation.characterId, role, text, createdAt: Date.now() }
+  return { id: newId(), conversationId: conversation.id, characterId: conversation.characterId, role, text, createdAt: Date.now() }
 }
 export function conversationMessages(data: LocalData, conversation: Conversation): Message[] {
   return data.messages.filter(m => m.characterId === conversation.characterId && m.conversationId === conversation.id)
 }
+import { newId } from './ids'

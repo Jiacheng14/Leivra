@@ -76,10 +76,11 @@ export function buildPrompt(input: PromptInput): ModelRequest {
     { kind: 'current-message', role: 'user', content: JSON.stringify(currentMessages.map(m=>({id:m.id,text:m.text,createdAt:m.createdAt}))) }
   ]
   return Object.freeze({
-    input: structuredClone({ turnId: input.turnId ?? crypto.randomUUID(), character, conversation, recentMessages: history, currentMessages }),
+    input: structuredClone({ turnId: input.turnId ?? newId(), character, conversation, recentMessages: history, currentMessages }),
     protocolVersion: CHAT_PROTOCOL.version, characterId: character.id,
     characterRevision: character.revision, conversationId: conversation.id,
     preferences: Object.freeze({ ...character.preferences }),
     sections: Object.freeze(sections.map(s => Object.freeze(s)))
   })
 }
+import { newId } from './ids'

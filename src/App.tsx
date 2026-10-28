@@ -14,7 +14,7 @@ function initialTheme(): 'light' | 'dark' {
 }
 const clock = (time: number) => new Date(time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 export default function App() {
-  const { data, character, conversation, messages, error, draft, setDraft, busy, send: sendMessage, activate, importCard, saveCard, clear: clearMessages, deleteContact, chatSettings, configure, replyError, retry } = useChat()
+  const { data, character, conversation, messages, error, writable, draft, setDraft, busy, send: sendMessage, activate, importCard, saveCard, clear: clearMessages, deleteContact, chatSettings, configure, replyError, retry } = useChat()
   const [theme, setTheme] = useState(initialTheme)
   const [settings, setSettings] = useState(false)
   const [contactsOpen, setContactsOpen] = useState(false)
@@ -76,7 +76,7 @@ export default function App() {
         <button className="icon-button" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} aria-label={theme === 'light' ? '切换深色主题' : '切换浅色主题'}>{theme === 'light' ? <Moon size={20}/> : <Sun size={20}/>}</button>
         <button ref={settingsButton} className="icon-button" aria-label="聊天设置" onClick={() => setSettings(true)}><Settings2 size={20}/></button>
       </header>
-      {replyError && <div role="alert" className="error-banner">{replyError} <button onClick={retry}>重试回复</button></div>}
+      {replyError && <div role="alert" className="error-banner">{replyError} <button onClick={retry} disabled={!writable}>重试回复</button></div>}
       {error && <div role="alert" className="error-banner">{error}</div>}
       {needRefresh && <div className="update-banner">有新版本可用 <button onClick={() => void updateServiceWorker(true)}>刷新更新</button><button aria-label="稍后更新" onClick={() => setNeedRefresh(false)}><X size={16}/></button></div>}
       <div ref={feed} className="message-feed" role="log" aria-label="聊天记录" aria-live="polite" onScroll={() => {
@@ -100,10 +100,10 @@ export default function App() {
       {character && <footer className="composer-area">
         <div className="composer-top"><span className="keyboard-hint ml-auto">Enter 发送 · Shift + Enter 换行</span></div>
         <form className="composer" onSubmit={e => { e.preventDefault(); void send() }}>
-          <textarea ref={input} aria-label="消息" placeholder={'和' + character.name + '说说话…'} value={draft} maxLength={MAX_LENGTH} rows={2}
+          <textarea ref={input} aria-label="消息" placeholder={'和' + character.name + '说说话…'} value={draft} maxLength={MAX_LENGTH} rows={2} disabled={!writable}
             onChange={e => setDraft(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229 && !matchMedia('(pointer: coarse)').matches) { e.preventDefault(); void send() } }}/>
-          <button type="submit" className="send-button" disabled={!draft.trim()} aria-label="发送消息"><span>发送</span><ArrowUp size={18}/></button>
+          <button type="submit" className="send-button" disabled={!writable || !draft.trim()} aria-label="发送消息"><span>发送</span><ArrowUp size={18}/></button>
         </form>
         <div className="composer-bottom"><span><ShieldCheck size={12}/> {isRealMode ? '记录保存在本机；回复时将相关上下文发送至 OpenAI' : '原型消息暂存于此浏览器，不会上传'}</span><span>{draft.length}/{MAX_LENGTH}</span></div>
       </footer>}
@@ -114,8 +114,8 @@ export default function App() {
       <p className="settings-description">{isRealMode ? '当前使用 OpenAI API，按用量计费。人物卡与当前会话的近期上下文经本地后端发送；没有长期记忆。失败不会切换为模拟回复。' : '当前是 UI 原型，回复为固定规则模拟，不具备真实理解或长期记忆。人物卡可在下方编辑或导出，添加联系人请使用侧栏；Mock 不模拟自定义人格提示词。'}</p>
       <div className="chat-timing-settings">
         <label htmlFor="reply-wait">回复等待时间 <output>{chatSettings.replyWaitMs / 1000} 秒</output></label>
-        <input id="reply-wait" type="range" min="1" max="15" step="0.5" value={chatSettings.replyWaitMs / 1000} onChange={e=>configure({...chatSettings, replyWaitMs:Number(e.target.value)*1000})}/>
-        <label><input type="checkbox" checked={chatSettings.deferWhileTyping} onChange={e=>configure({...chatSettings,deferWhileTyping:e.target.checked})}/>正在输入时延后回复</label>
+        <input id="reply-wait" type="range" min="1" max="15" step="0.5" value={chatSettings.replyWaitMs / 1000} disabled={!writable} onChange={e=>configure({...chatSettings, replyWaitMs:Number(e.target.value)*1000})}/>
+        <label><input type="checkbox" checked={chatSettings.deferWhileTyping} disabled={!writable} onChange={e=>configure({...chatSettings,deferWhileTyping:e.target.checked})}/>正在输入时延后回复</label>
       </div>
       <div className="privacy-card"><ShieldCheck size={20}/><div><strong>关于本地记录</strong><p>每个角色仅保留最近 500 条消息，未加密。共用浏览器的人可能查看记录；清理站点数据会使记录丢失。多标签页同步暂未支持。</p></div></div>
       {character && <>

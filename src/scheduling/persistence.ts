@@ -28,7 +28,7 @@ export function validateSnapshots(value: unknown, conversations: Conversation[])
       const a = record(v.active), messages = batch(a.messages)
       const output = a.output === undefined ? undefined : validateModelOutput({messages:a.output}).messages
       if (!messages.length || !Number.isSafeInteger(a.nextIndex) || Number(a.nextIndex)<0 || Number(a.nextIndex)>(output?.length ?? 0)) throw new Error('回复发送进度错误。')
-      result.active = { id: stableId(a.id), messages, output, nextIndex: Number(a.nextIndex) }
+      result.active = { id: stableId(a.id), ...(a.requestId === undefined ? {} : { requestId: stableId(a.requestId) }), messages, output, nextIndex: Number(a.nextIndex) }
     }
     unique([...result.pending, ...(result.active?.messages ?? [])].map(m=>m.id))
     if ((result.phase === 'Generating' || result.phase === 'Dispatching') && !result.active) throw new Error('调度缺少当前轮次。')
