@@ -114,7 +114,7 @@ export default function App() {
       <p className="settings-description">{isRealMode ? '当前使用 OpenAI API，按用量计费。人物卡与当前会话的近期上下文经本地后端发送；没有长期记忆。失败不会切换为模拟回复。' : '当前是 UI 原型，回复为固定规则模拟，不具备真实理解或长期记忆。人物卡可在下方编辑或导出，添加联系人请使用侧栏；Mock 不模拟自定义人格提示词。'}</p>
       <div className="chat-timing-settings">
         <label htmlFor="reply-wait">回复等待时间 <output>{chatSettings.replyWaitMs / 1000} 秒</output></label>
-        <input id="reply-wait" type="range" min="1" max="15" step="0.5" value={chatSettings.replyWaitMs / 1000} disabled={!writable} onChange={e=>configure({...chatSettings, replyWaitMs:Number(e.target.value)*1000})}/>
+        <input id="reply-wait" type="range" min="1" max="60" step="0.5" value={chatSettings.replyWaitMs / 1000} disabled={!writable} onChange={e=>configure({...chatSettings, replyWaitMs:Number(e.target.value)*1000})}/>
         <label><input type="checkbox" checked={chatSettings.deferWhileTyping} disabled={!writable} onChange={e=>configure({...chatSettings,deferWhileTyping:e.target.checked})}/>正在输入时延后回复</label>
       </div>
       <div className="privacy-card"><ShieldCheck size={20}/><div><strong>关于本地记录</strong><p>每个角色仅保留最近 500 条消息，未加密。共用浏览器的人可能查看记录；清理站点数据会使记录丢失。多标签页同步暂未支持。</p></div></div>

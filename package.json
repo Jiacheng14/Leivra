@@ -16,7 +16,8 @@
     "test:ownership:e2e": "node scripts/ownership-browser-test.cjs",
     "dev:real": "node scripts/dev-real.mjs",
     "typecheck": "tsc --noEmit",
-    "test:scheduler:e2e": "node scripts/scheduler-browser-test.mjs"
+    "test:scheduler:e2e": "node scripts/scheduler-browser-test.mjs",
+    "test:timing:e2e": "node scripts/timing-browser-test.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",

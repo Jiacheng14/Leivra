@@ -16,6 +16,28 @@ function setup(overrides: Partial<ConstructorParameters<typeof MessageScheduler>
   return {scheduler,generate,emitted,conversation,saved:()=>saved}
 }
 describe('message collection',()=>{
+  it('does not start generation before 3500ms from the last sent message',async()=>{
+    const calls:{at:number;texts:string[]}[]=[]
+    const t=setup({generate:async messages=>{calls.push({at:Date.now(),texts:messages.map(m=>m.text)});return {messages:['回复']}}})
+    await t.scheduler.enqueue(createMessage(t.conversation,'user','第一条'))
+    await vi.advanceTimersByTimeAsync(3000)
+    t.scheduler.inputActivity()
+    await vi.advanceTimersByTimeAsync(490)
+    expect(calls).toEqual([])
+    await vi.advanceTimersByTimeAsync(10)
+    expect(calls).toEqual([{at:103500,texts:['第一条']}])
+  })
+  it('resets the deadline for a second sent message and keeps both bubbles',async()=>{
+    const calls:{at:number;texts:string[]}[]=[]
+    const t=setup({generate:async messages=>{calls.push({at:Date.now(),texts:messages.map(m=>m.text)});return {messages:['回复']}}})
+    await t.scheduler.enqueue(createMessage(t.conversation,'user','第一条'))
+    await vi.advanceTimersByTimeAsync(2000)
+    await t.scheduler.enqueue(createMessage(t.conversation,'user','第二条'))
+    await vi.advanceTimersByTimeAsync(3490)
+    expect(calls).toEqual([])
+    await vi.advanceTimersByTimeAsync(10)
+    expect(calls).toEqual([{at:105500,texts:['第一条','第二条']}])
+  })
   it('groups three separately sent messages once and resets the quiet timer',async()=>{
     const t=setup()
     for(const text of ['好烦','今天作业多','写不完']) {
@@ -36,7 +58,7 @@ describe('message collection',()=>{
     await vi.advanceTimersByTimeAsync(500)
     expect(t.generate).toHaveBeenCalledTimes(1)
   })
-  it('ignores typing by default and caps optional typing deferral',async()=>{
+  it('ignores typing by default and waits the configured interval after activity',async()=>{
     const normal=setup();normal.scheduler.enqueue(createMessage(normal.conversation,'user','A'))
     await vi.advanceTimersByTimeAsync(3000);normal.scheduler.inputActivity()
     await vi.advanceTimersByTimeAsync(500);expect(normal.generate).toHaveBeenCalledTimes(1)
@@ -44,11 +66,112 @@ describe('message collection',()=>{
     t.scheduler.enqueue(createMessage(t.conversation,'user','B'))
     for(let i=0;i<13;i++){await vi.advanceTimersByTimeAsync(1000);t.scheduler.inputActivity()}
     expect(t.generate).not.toHaveBeenCalled()
-    await vi.advanceTimersByTimeAsync(500)
+    await vi.advanceTimersByTimeAsync(3490)
+    expect(t.generate).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(10)
     expect(t.generate).toHaveBeenCalledTimes(1)
+  })
+  it('supports a 60 second quiet interval and caps a round at five minutes from its first sent message',async()=>{
+    const calls:{at:number;texts:string[]}[]=[]
+    const t=setup({settings:{replyWaitMs:60000,deferWhileTyping:true},
+      generate:async messages=>{calls.push({at:Date.now(),texts:messages.map(m=>m.text)});return {messages:['回复']}}})
+    await t.scheduler.enqueue(createMessage(t.conversation,'user','第一条'))
+    for(let i=0;i<7;i++) {
+      await vi.advanceTimersByTimeAsync(40000)
+      t.scheduler.inputActivity()
+    }
+    await vi.advanceTimersByTimeAsync(19990)
+    expect(calls).toEqual([])
+    await vi.advanceTimersByTimeAsync(10)
+    expect(calls).toEqual([{at:400000,texts:['第一条']}])
+  })
+  it('includes a late second message but still starts the round at the five minute cap',async()=>{
+    const calls:{at:number;texts:string[]}[]=[]
+    const t=setup({settings:{replyWaitMs:60000,deferWhileTyping:false},
+      generate:async messages=>{calls.push({at:Date.now(),texts:messages.map(m=>m.text)});return {messages:['回复']}}})
+    await t.scheduler.enqueue(createMessage(t.conversation,'user','第一条'))
+    for(let i=0;i<5;i++) {
+      await vi.advanceTimersByTimeAsync(50000)
+      await t.scheduler.enqueue(createMessage(t.conversation,'user',`中途消息${i}`))
+    }
+    await vi.advanceTimersByTimeAsync(40000)
+    await t.scheduler.enqueue(createMessage(t.conversation,'user','最后一条'))
+    await vi.advanceTimersByTimeAsync(9990)
+    expect(calls).toEqual([])
+    await vi.advanceTimersByTimeAsync(10)
+    expect(calls).toEqual([{at:400000,texts:['第一条','中途消息0','中途消息1','中途消息2','中途消息3','中途消息4','最后一条']}])
   })
 })
 describe('per-conversation work',()=>{
+  it('joins a message sent while the generating save is pending and restarts its wait',async()=>{
+    const conversation=createConversation('test')
+    let confirm!:()=>void
+    let hold=true
+    const calls:{at:number;texts:string[]}[]=[]
+    const scheduler=new MessageScheduler({conversationId:conversation.id,characterId:conversation.characterId,
+      generate:async messages=>{calls.push({at:Date.now(),texts:messages.map(m=>m.text)});return {messages:['回复']}},
+      commit:state=>{
+        if (hold && state.phase==='Generating' && state.active?.messages.length===1) {
+          hold=false;return new Promise<void>(resolve=>{confirm=resolve})
+        }
+      }})
+    await scheduler.start()
+    await scheduler.enqueue(createMessage(conversation,'user','第一条'))
+    await vi.advanceTimersByTimeAsync(3500)
+    expect(calls).toEqual([])
+    const second=scheduler.enqueue(createMessage(conversation,'user','第二条'))
+    confirm(); await second
+    await vi.advanceTimersByTimeAsync(3490)
+    expect(calls).toEqual([])
+    await vi.advanceTimersByTimeAsync(10)
+    expect(calls).toEqual([{at:107000,texts:['第一条','第二条']}])
+    scheduler.dispose()
+  })
+  it('honors typing deferral while a request is waiting for durable state',async()=>{
+    const conversation=createConversation('test')
+    let confirm!:()=>void
+    let hold=true
+    const calls:number[]=[]
+    const scheduler=new MessageScheduler({conversationId:conversation.id,characterId:conversation.characterId,
+      settings:{replyWaitMs:3500,deferWhileTyping:true},
+      generate:async()=>{calls.push(Date.now());return {messages:['回复']}},
+      commit:state=>{
+        if (hold && state.phase==='Generating') {
+          hold=false;return new Promise<void>(resolve=>{confirm=resolve})
+        }
+      }})
+    await scheduler.start()
+    await scheduler.enqueue(createMessage(conversation,'user','第一条'))
+    await vi.advanceTimersByTimeAsync(3500)
+    scheduler.inputActivity()
+    confirm(); await vi.advanceTimersByTimeAsync(3490)
+    expect(calls).toEqual([])
+    await vi.advanceTimersByTimeAsync(10)
+    expect(calls).toEqual([107000])
+    scheduler.dispose()
+  })
+  it('applies a changed wait setting before the request starts',async()=>{
+    const conversation=createConversation('test')
+    let confirm!:()=>void
+    let hold=true
+    const calls:number[]=[]
+    const scheduler=new MessageScheduler({conversationId:conversation.id,characterId:conversation.characterId,
+      generate:async()=>{calls.push(Date.now());return {messages:['回复']}},
+      commit:state=>{
+        if (hold && state.phase==='Generating') {
+          hold=false;return new Promise<void>(resolve=>{confirm=resolve})
+        }
+      }})
+    await scheduler.start()
+    await scheduler.enqueue(createMessage(conversation,'user','第一条'))
+    await vi.advanceTimersByTimeAsync(3500)
+    scheduler.configure({replyWaitMs:5000,deferWhileTyping:false})
+    confirm(); await vi.advanceTimersByTimeAsync(1490)
+    expect(calls).toEqual([])
+    await vi.advanceTimersByTimeAsync(10)
+    expect(calls).toEqual([105000])
+    scheduler.dispose()
+  })
   it('waits for async persistence before a request and pauses on rejection',async()=>{
     const conversation=createConversation('test')
     let rejectCommit!: (reason?: unknown)=>void

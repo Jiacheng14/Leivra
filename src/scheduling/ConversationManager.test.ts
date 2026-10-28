@@ -3,6 +3,7 @@ import { ConversationManager } from './ConversationManager'
 import { createInitialData, validateData, appendMessages } from '../storage'
 import { addCharacter } from '../characters/cards'
 import { mockProvider } from '../chat'
+import { createRealProvider } from '../providers/real'
 import { replyDelayMs, validateModelOutput } from '../reply'
 import type { ModelProvider } from '../models'
 beforeEach(()=>{ vi.useFakeTimers(); vi.setSystemTime(100000) })
@@ -25,6 +26,41 @@ it('runs the actual mock through the manager, groups messages, preserves setting
   expect(data.messages.filter(m=>m.role==='assistant')).toHaveLength(2)
   expect(data.chatSettings).toEqual({replyWaitMs:1000,deferWhileTyping:true})
   expect(fetch).not.toHaveBeenCalled();manager.dispose()
+})
+it('restores the saved 3.5s setting and remaining collection delay',async()=>{
+  let data=createInitialData([])
+  const provider:ModelProvider={id:'test',reply:vi.fn(async()=>({messages:['回复']}))}
+  let manager=new ConversationManager(provider,()=>data,next=>{data=validateData(next)})
+  manager.start();manager.configure({replyWaitMs:3500,deferWhileTyping:false})
+  await manager.send(data.conversations[0].id,'刷新前发送')
+  await vi.advanceTimersByTimeAsync(2000)
+  manager.dispose();data=validateData(JSON.parse(JSON.stringify(data)))
+  expect(data.chatSettings).toEqual({replyWaitMs:3500,deferWhileTyping:false})
+  manager=new ConversationManager(provider,()=>data,next=>{data=validateData(next)})
+  manager.start()
+  await vi.advanceTimersByTimeAsync(1490)
+  expect(provider.reply).not.toHaveBeenCalled()
+  await vi.advanceTimersByTimeAsync(10)
+  expect(provider.reply).toHaveBeenCalledTimes(1)
+  expect(vi.mocked(provider.reply).mock.calls[0][0].input.currentMessages.map(m=>m.text)).toEqual(['刷新前发送'])
+  manager.dispose()
+})
+it('uses the same 3.5s scheduling boundary for Mock and Real adapters',async()=>{
+  for(const mode of ['mock','real'] as const) {
+    vi.setSystemTime(100000)
+    let data=createInitialData([])
+    const fetcher=vi.fn(async()=>Response.json({messages:['假回复']}))
+    const mock={...mockProvider,reply:vi.fn(mockProvider.reply)}
+    const provider=mode==='mock'?mock:createRealProvider(fetcher)
+    const manager=new ConversationManager(provider,()=>data,next=>{data=validateData(next)})
+    manager.start();manager.configure({replyWaitMs:3500,deferWhileTyping:false})
+    await manager.send(data.conversations[0].id,'测试')
+    await vi.advanceTimersByTimeAsync(3490)
+    expect(mode==='mock'?mock.reply:fetcher).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(10)
+    expect(mode==='mock'?mock.reply:fetcher).toHaveBeenCalledTimes(1)
+    manager.dispose()
+  }
 })
 it('keeps the user message in memory and never calls the provider after a failed save',async()=>{
   let data=createInitialData([])

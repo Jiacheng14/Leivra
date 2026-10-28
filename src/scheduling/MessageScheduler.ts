@@ -1,7 +1,7 @@
 import { newId } from '../ids'
 import { replyDelayMs, validateModelOutput } from '../reply'
 import type { Message, ModelOutput } from '../models'
-import { DEFAULT_CHAT_SETTINGS, INPUT_ACTIVITY_GRACE_MS, MAX_TYPING_EXTENSION_MS, validateChatSettings, type ChatSettings } from './settings'
+import { DEFAULT_CHAT_SETTINGS, MAX_ROUND_WAIT_MS, validateChatSettings, type ChatSettings } from './settings'
 
 export type ConversationPhase = 'Idle' | 'Collecting' | 'Generating' | 'Dispatching'
 export interface ActiveTurn {
@@ -47,6 +47,7 @@ export class MessageScheduler {
   private lastInputAt = 0
   private closed = false
   private paused = false
+  private requestStarted = false
   private writes: Promise<void> | null = null
   constructor(private options: Options) {
     this.settings = validateChatSettings(options.settings ?? DEFAULT_CHAT_SETTINGS)
@@ -54,6 +55,8 @@ export class MessageScheduler {
       conversationId: options.conversationId, characterId: options.characterId,
       phase: 'Idle', pending: [], lastSentAt: 0
     })
+    // A restored active turn may already have reached the provider. Keep it separate.
+    this.requestStarted = Boolean(options.restored?.active)
     if (this.state.phase === 'Generating') {
       this.state.phase = 'Idle'
       this.state.error = '上次生成已中断，未自动重发。可手动重试回复。'
@@ -69,7 +72,9 @@ export class MessageScheduler {
     if (this.closed) throw new Error('会话已关闭。')
     if (message.role !== 'user' || message.characterId !== this.state.characterId || message.conversationId !== this.state.conversationId) throw new Error('消息与会话不匹配。')
     if ([...this.state.pending, ...(this.state.active?.messages ?? [])].some(m => m.id === message.id)) throw new Error('消息已进入调度队列。')
-    if (this.state.pending.length >= MAX_PENDING_MESSAGES || this.state.pending.reduce((n,m)=>n+m.text.length,0) + message.text.length > MAX_PENDING_CHARACTERS) throw new Error('待回复消息过多，请稍候再发送。')
+    const collecting = this.state.active && !this.requestStarted ? [...this.state.active.messages, ...this.state.pending] : this.state.pending
+    if (collecting.length >= MAX_PENDING_MESSAGES || collecting.reduce((n,m)=>n+m.text.length,0) + message.text.length > MAX_PENDING_CHARACTERS) throw new Error('待回复消息过多，请稍候再发送。')
+    this.requeueBeforeRequest()
     this.state.pending.push(structuredClone(message))
     this.state.lastSentAt = Date.now()
     if (!this.state.active) this.state.phase = 'Collecting'
@@ -78,11 +83,17 @@ export class MessageScheduler {
     return true
   }
   inputActivity() {
-    if (this.closed || !this.settings.deferWhileTyping || !this.state.pending.length) return
-    this.lastInputAt = Date.now(); this.schedule()
+    if (this.closed || !this.settings.deferWhileTyping || (!this.state.pending.length && !(this.state.active && !this.requestStarted))) return
+    this.lastInputAt = Date.now()
+    if (this.requeueBeforeRequest()) {
+      void this.commit().then(saved => { if (saved) this.schedule() })
+    } else this.schedule()
   }
   configure(settings: ChatSettings) {
-    this.settings = validateChatSettings(settings); this.schedule()
+    this.settings = validateChatSettings(settings)
+    if (this.requeueBeforeRequest()) {
+      void this.commit().then(saved => { if (saved) this.schedule() })
+    } else this.schedule()
   }
   async retry() {
     if (this.closed || !this.state.error) return
@@ -101,6 +112,14 @@ export class MessageScheduler {
     this.closed = true; this.generation++
     clearTimeout(this.timer); clearTimeout(this.timeout)
     this.request?.abort()
+  }
+  private requeueBeforeRequest(): boolean {
+    if (!this.state.active || this.requestStarted || this.state.active.output) return false
+    this.generation++ // Invalidates a Generating snapshot awaiting storage confirmation.
+    this.state.pending = [...this.state.active.messages, ...this.state.pending]
+    this.state.active = undefined
+    this.state.phase = 'Collecting'
+    return true
   }
   private commit(emitted?: Message): Promise<boolean> {
     const snapshot = this.snapshot()
@@ -127,7 +146,9 @@ export class MessageScheduler {
   }
   private deadline() {
     const base = this.state.lastSentAt + this.settings.replyWaitMs
-    return this.settings.deferWhileTyping ? Math.min(base + MAX_TYPING_EXTENSION_MS, Math.max(base, this.lastInputAt + INPUT_ACTIVITY_GRACE_MS)) : base
+    const firstSentAt = Math.min(...this.state.pending.map(message => message.createdAt))
+    const quietUntil = this.settings.deferWhileTyping ? Math.max(base, this.lastInputAt + this.settings.replyWaitMs) : base
+    return Math.min(firstSentAt + MAX_ROUND_WAIT_MS, quietUntil)
   }
   private schedule() {
     if (this.closed || this.paused || this.state.error || this.state.active || !this.state.pending.length) return
@@ -150,7 +171,9 @@ export class MessageScheduler {
       const timeout = new Promise<never>((_, reject) => {
         this.timeout = setTimeout(() => { request.abort(); reject(new Error('回复请求超时，请手动重试。')) }, this.options.timeoutMs ?? REQUEST_TIMEOUT_MS)
       })
-      const output = await Promise.race([this.options.generate(structuredClone(active.messages), active.requestId ?? active.id, request.signal), timeout])
+      const generation = this.options.generate(structuredClone(active.messages), active.requestId ?? active.id, request.signal)
+      this.requestStarted = true
+      const output = await Promise.race([generation, timeout])
       if (this.closed || token !== this.generation) return
       clearTimeout(this.timeout)
       active.output = validateModelOutput(output).messages; active.nextIndex = 0
@@ -186,6 +209,7 @@ export class MessageScheduler {
   }
   private async finish() {
     this.state.active = undefined
+    this.requestStarted = false
     if (this.state.error && this.state.pending.length) {
       this.state.active = { id: newId(), messages: this.state.pending, nextIndex: 0 }
       this.state.pending = []; this.state.phase = 'Idle'; await this.commit(); return
