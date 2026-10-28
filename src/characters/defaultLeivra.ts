@@ -1,18 +1,9 @@
 import type { Character, Conversation, Message } from '../models'
 import { createMessage } from '../models'
-export const DEFAULT_CHARACTER_ID = 'leivra-default'
-export const defaultLeivra: Character = {
-  schemaVersion: 1,
-  id: DEFAULT_CHARACTER_ID,
-  revision: 1,
-  name: '蕾芙菈',
-  avatar: '/avatar.svg',
-  background: '一位温柔、知性、成熟、有主见的女性。',
-  personality: ['温柔', '知性', '成熟', '有主见', '略带姐姐式宠溺感'],
-  speakingStyle: '温柔，也有自己的想法。',
-  relationship: '与用户自然交流的私人 AI 联系人。',
-  customPrompt: '关心用户的感受，表达自己的判断。以成熟、自然的口吻交流，保留一点姐姐式的宠溺。',
-}
+import card from './leivra.json'
+import { validateCharacter } from './cards'
+export const defaultLeivra: Character = validateCharacter(card)
+export const DEFAULT_CHARACTER_ID = defaultLeivra.id
 // Retain the existing prototype's two demo messages only for the default contact.
 export function defaultGreeting(conversation: Conversation): Message[] {
   return [createMessage(conversation, 'assistant', '来啦。今天过得怎么样？'), createMessage(conversation, 'assistant', '不用急着整理好心情，想到什么，就慢慢跟我说。')]

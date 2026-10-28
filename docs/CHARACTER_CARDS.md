@@ -47,7 +47,7 @@ temperature 可选，范围 0–2，当前适配器暂不发送该参数；maxRe
 
 ## 保存位置与隐私
 人物卡、当前联系人、会话和消息存于当前 origin 的 localStorage：leivra.data.v1。它不是项目目录中的数据库文件，也不跨设备或端口同步。
-默认人物卡源码在 src/characters/defaultLeivra.ts。修改源码不会覆盖浏览器中已经保存的人物卡，日常修改通过设置完成。
+默认人物卡在 src/characters/leivra.json，由 defaultLeivra.ts 校验并提供原有导出接口。修改源码不会覆盖浏览器中已经保存的人物卡，日常修改通过设置完成。
 卡片导出与聊天导出分开；聊天导出仅包含当前角色、会话标识和对应消息。
 旧数据键 leivra.prototype.messages.v1 在迁移后保留为备份；清空默认角色消息或删除默认联系人时删除此备份。清空其他角色不会影响默认角色与备份。
 未加密；清理浏览器站点数据会删除所有联系人和历史。当前不保存长期记忆。
@@ -71,6 +71,6 @@ temperature 可选，范围 0–2，当前适配器暂不发送该参数；maxRe
 
 每张源卡不超过 256 KiB UTF-8，嵌套最多 16 层、总节点最多 10000、单数组最多 1000 项。名称 80 字符，description/scenario 各 8000，personality 10000，mes_example/first_mes 各 12000；已知附加字符串各最多 12000。世界书校验对象、entries 及条目的必需数据类型，但不执行。未知 JSON 保留且不合并到运行时配置；不执行脚本、宏或外部资源请求。Leivra 扩展的头像、风格、关系、补充设定及偏好沿用 v1 约束。
 
-system_prompt 和 post_history_instructions 仅保留，不用于系统提示词替换或历史后追加。开场白、备用开场白、作者备注和世界书不自动注入、不生成聊天记录。后续阶段的 PersonaRenderer 只读取明确允许的人格资料字段。
+system_prompt 和 post_history_instructions 仅保留，不用于系统提示词替换或历史后追加。开场白、备用开场白、作者备注和世界书不自动注入、不生成聊天记录。PersonaRenderer 只读取明确允许的人格资料字段；有效人格 JSON 最多 128 KiB UTF-8，超限报错，不截断。
 
 旧 leivra.data.v1 快照继续可读，不覆盖浏览器已有卡片。含 sourceCardV2 的新快照不能直接交给旧程序校验；回滚程序前应保留当前站点数据和 V2 卡片导出，避免用旧程序写入新快照。
