@@ -3,16 +3,15 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Leaf, Plus, ShieldCheck, Trash2, X } from 'lucide-react'
 import type { Character } from './models'
 import { CARD_LIMIT_BYTES } from './characters/cards'
-import { DEFAULT_CHARACTER_ID } from './characters/defaultLeivra'
 
 interface Props {
   characters: Character[]
   activeId: string | null
   open: boolean
   onClose(): void
-  onSelect(id: string): void
-  onImport(json: string): void
-  onDelete(id: string): void
+  onSelect(id: string): void | Promise<void>
+  onImport(json: string): void | Promise<void>
+  onDelete(id: string): void | Promise<void>
 }
 export default function ContactsSidebar({ characters, activeId, open, onClose, onSelect, onImport, onDelete }: Props) {
   const [mobile, setMobile] = useState(() => matchMedia('(max-width: 700px)').matches)
@@ -62,7 +61,7 @@ export default function ContactsSidebar({ characters, activeId, open, onClose, o
       setError('')
       try {
         if (file.size > CARD_LIMIT_BYTES) throw new Error('人物卡文件不得超过 256 KiB。')
-        onImport(await file.text()); onClose()
+        await onImport(await file.text()); onClose()
       } catch (error) { setError(error instanceof Error ? error.message : '人物卡导入失败。') }
     }}/>
     {error && <p className="card-error" role="alert">{error}</p>}
@@ -77,13 +76,13 @@ export default function ContactsSidebar({ characters, activeId, open, onClose, o
       else addButton.current?.focus()
     }}>
       <h2 id="delete-contact-title">删除联系人</h2>
-      <p>将删除「{deleting?.name}」在此浏览器中的人物卡、专属会话和消息{deleting?.id === DEFAULT_CHARACTER_ID ? '，以及旧版聊天迁移备份' : ''}，无法撤销。其他联系人不受影响。</p>
+      <p>将删除「{deleting?.name}」在此浏览器中的人物卡、专属会话和消息，无法撤销。其他联系人不受影响。</p>
       {deleteError && <p className="card-error" role="alert">{deleteError}</p>}
       <div className="delete-contact-actions">
         <button type="button" autoFocus onClick={closeConfirmation}>取消</button>
-        <button type="button" className="danger" onClick={() => {
+        <button type="button" className="danger" onClick={async () => {
           if (!deleting) return
-          try { onDelete(deleting.id); closeConfirmation() }
+          try { await onDelete(deleting.id); closeConfirmation() }
           catch (error) { setDeleteError(error instanceof Error ? error.message : '联系人删除失败。') }
         }}>确认删除联系人</button>
       </div>

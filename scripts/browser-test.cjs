@@ -1,7 +1,26 @@
 const { chromium } = require('playwright')
+const { existsSync } = require('node:fs')
 const assert = require('node:assert/strict'); require('node:fs').mkdirSync('test-results', {recursive:true})
+const readData = page => page.evaluate(() => new Promise((resolve, reject) => {
+  const open = indexedDB.open('leivra-local')
+  open.onerror = () => reject(open.error)
+  open.onsuccess = () => {
+    const db = open.result, tx = db.transaction('snapshots', 'readonly')
+    const get = tx.objectStore('snapshots').get('current')
+    get.onsuccess = () => resolve(get.result)
+    get.onerror = () => reject(get.error)
+    tx.oncomplete = () => db.close()
+  }
+}))
+async function waitIdle(page, id) {
+  for (let i = 0; i < 150; i++) {
+    if ((await readData(page)).schedulerSnapshots?.find(s => s.characterId === id)?.phase === 'Idle') return
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  throw new Error('Scheduler did not become Idle')
+}
 const server = require('node:child_process').spawn(process.execPath,['node_modules/vite/bin/vite.js','preview','--host','127.0.0.1','--port','4180','--strictPort'],{stdio:'inherit'}); process.on('exit',()=>server.kill()); ;(async () => { await new Promise(r=>setTimeout(r,2000));
-  const browser = await chromium.launch({headless:true,downloadsPath:require('node:path').resolve('test-results/downloads')})
+  const browser = await chromium.launch({headless:true,downloadsPath:require('node:path').resolve('test-results/downloads'),...(existsSync(chromium.executablePath())?{}:{channel:'chrome'})})
   const context = await browser.newContext({viewport:{width:1440,height:960},colorScheme:'light'})
   const page = await context.newPage()
   const errors=[]; page.on('pageerror',e=>errors.push(e.message))
@@ -14,14 +33,16 @@ const server = require('node:child_process').spawn(process.execPath,['node_modul
   await page.getByText('今天有点累',{exact:true}).waitFor()
   await page.screenshot({path:'test-results/desktop-light.png',fullPage:true})
   await page.getByRole('button',{name:'切换深色主题'}).click()
+  for(let i=0;i<100 && (await readData(page)).theme!=='dark';i++) await new Promise(resolve=>setTimeout(resolve,20))
   await page.reload()
+  await page.locator('html[data-theme="dark"]').waitFor()
   assert.equal(await page.locator('html').getAttribute('data-theme'),'dark')
   await page.screenshot({path:'test-results/desktop-dark.png',fullPage:true})
   await page.getByRole('button',{name:'聊天设置'}).click()
   const downloadPromise=page.waitForEvent('download')
-  await page.getByRole('button',{name:/导出本地测试记录/}).click()
+  await page.getByRole('button',{name:/导出完整备份/}).click()
   const download=await downloadPromise; await download.saveAs('test-results/export.json')
-  assert.equal(JSON.parse(require('node:fs').readFileSync('test-results/export.json','utf8')).messages.length,5)
+  assert.equal(JSON.parse(require('node:fs').readFileSync('test-results/export.json','utf8')).data.messages.length,5)
   await page.getByRole('button',{name:'关闭设置'}).click()
   await page.getByRole('textbox',{name:'消息',exact:true}).fill('请取消这次回复')
   await page.getByRole('button',{name:'发送消息',exact:true}).click()
@@ -94,7 +115,7 @@ const server = require('node:child_process').spawn(process.execPath,['node_modul
     const select=async(id)=>{
       await openContacts()
       await p.locator('[data-character-id="'+id+'"] .conversation').click()
-      assert.equal(await p.locator('[data-character-id="'+id+'"] .conversation').getAttribute('aria-current'),'true')
+      await p.waitForFunction(value=>document.querySelector('[data-character-id="'+value+'"] .conversation')?.getAttribute('aria-current')==='true',id)
     }
     const upload=async(value)=>{
       await openContacts()
@@ -111,10 +132,10 @@ const server = require('node:child_process').spawn(process.execPath,['node_modul
       for (const word of ['人物卡','专属会话','消息','无法撤销','其他联系人不受影响']) assert(text.includes(word))
     }
     const confirmDelete=async()=>{ await p.getByRole('button',{name:'确认删除联系人',exact:true}).click();await p.locator('.delete-contact-dialog').waitFor({state:'hidden'}) }
-    const snapshot=()=>p.evaluate(()=>JSON.parse(localStorage.getItem('leivra.data.v1')))
+    const snapshot=()=>readData(p)
     const waitContactName=async(name)=>{await p.waitForFunction(value=>document.querySelector('h1 .role-name')?.textContent===value,name)}
     await openCards()
-    assert.equal(await settings.locator('select,input[type=file]').count(),0)
+    assert.equal(await settings.locator('input[type=file][aria-label="选择 Leivra 备份"]').count(),1)
     const cardDownloadPromise=p.waitForEvent('download')
     await p.getByRole('button',{name:'导出 JSON',exact:true}).click()
     const cardDownload=await cardDownloadPromise;await cardDownload.saveAs('test-results/default-character.json')
@@ -152,7 +173,7 @@ const server = require('node:child_process').spawn(process.execPath,['node_modul
     assert.equal(await p.locator('.message-row').count(),2)
     await p.getByRole('textbox',{name:'消息',exact:true}).fill('切换后继续回复')
     await p.getByRole('button',{name:'发送消息',exact:true}).click()
-    await select(card.id);await p.waitForFunction(id=>JSON.parse(localStorage.getItem('leivra.data.v1')).schedulerSnapshots.find(s=>s.characterId===id)?.phase==='Idle',defaultCard.id)
+    await select(card.id);await waitIdle(p,defaultCard.id)
     assert.equal(await p.locator('.message-row').count(),2)
     assert.equal(await p.locator('.message-feed').getByText('切换后继续回复',{exact:true}).count(),0)
     assert(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth))
@@ -160,6 +181,7 @@ const server = require('node:child_process').spawn(process.execPath,['node_modul
     await openCards()
     await p.getByRole('button',{name:'清空本地聊天',exact:true}).click()
     await p.getByRole('button',{name:'确认清空',exact:true}).click()
+    await p.waitForFunction(()=>document.querySelectorAll('.message-row').length===0)
     assert.equal(await p.locator('.message-row').count(),0)
     await select(defaultCard.id)
     assert.equal(await p.locator('.message-row').count(),5)
@@ -178,7 +200,7 @@ const server = require('node:child_process').spawn(process.execPath,['node_modul
     await p.getByRole('textbox',{name:'消息',exact:true}).fill('删除期间取消回复')
     await p.getByRole('button',{name:'发送消息',exact:true}).click()
     await beginDelete(card.id);await confirmDelete();await closeContacts()
-    await p.waitForFunction(id=>JSON.parse(localStorage.getItem('leivra.data.v1')).schedulerSnapshots.find(s=>s.characterId===id)?.phase==='Idle',defaultCard.id)
+    await waitIdle(p,defaultCard.id)
     const afterOther=await snapshot()
     assert.equal(afterOther.activeCharacterId,defaultCard.id)
     assert.equal(afterOther.characters.length,1)
@@ -186,17 +208,17 @@ const server = require('node:child_process').spawn(process.execPath,['node_modul
     assert.equal(afterOther.conversations.filter(c=>c.characterId===card.id).length,0)
     assert.equal(afterOther.messages.length,8)
 
-    // Deleting the current default contact switches to the remaining contact and clears legacy backup.
+    // Deleting the current default contact switches to the remaining contact and retains the migration source.
     await upload(card);await waitContactName(card.name);if(width===390)await p.locator('.contacts-drawer').waitFor({state:'hidden'});await select(defaultCard.id)
     await p.evaluate(()=>localStorage.setItem('leivra.prototype.messages.v1','[]'))
     await beginDelete(defaultCard.id)
-    assert((await p.locator('.delete-contact-dialog').innerText()).includes('旧版聊天迁移备份'))
+    assert(!(await p.locator('.delete-contact-dialog').innerText()).includes('旧版聊天迁移备份'))
     await confirmDelete();await closeContacts()
     const afterCurrent=await snapshot()
     assert.equal(afterCurrent.activeCharacterId,card.id)
     assert.equal(afterCurrent.characters.length,1)
     assert(afterCurrent.messages.every(m=>m.characterId!==defaultCard.id))
-    assert.equal(await p.evaluate(()=>localStorage.getItem('leivra.prototype.messages.v1')),null)
+    assert.equal(await p.evaluate(()=>localStorage.getItem('leivra.prototype.messages.v1')),'[]')
     await p.reload()
     await waitContactName(card.name)
     assert.equal(await p.locator('.message-row').count(),0)
@@ -233,8 +255,9 @@ const server = require('node:child_process').spawn(process.execPath,['node_modul
   const migrated=await migration.newPage();await migrated.goto('http://127.0.0.1:4180')
   await migrated.getByText('旧版消息',{exact:true}).waitFor()
   await migrated.reload()
+  await migrated.getByText('旧版消息',{exact:true}).waitFor()
   assert.equal(await migrated.locator('.message-row').count(),1)
-  assert.equal(await migrated.evaluate(()=>JSON.parse(localStorage.getItem('leivra.data.v1')).messages[0].id),'old-id')
+  assert.equal((await readData(migrated)).messages[0].id,'old-id')
   await migration.close()
   assert.deepEqual(multiErrors,[])
 

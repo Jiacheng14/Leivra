@@ -18,6 +18,7 @@
     "typecheck": "tsc --noEmit",
     "test:scheduler:e2e": "node scripts/scheduler-browser-test.mjs",
     "test:timing:e2e": "node scripts/timing-browser-test.mjs",
+    "test:storage:e2e": "node scripts/storage-browser-test.mjs",
     "test:persona:e2e": "node scripts/persona-browser-test.mjs"
   },
   "dependencies": {

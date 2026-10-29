@@ -33,7 +33,7 @@ React + TypeScript + Vite + Tailwind + PWA 保持不变。新增最小 Workers �
 
 第一条在完成生成后立即提交；后续按即将显示的消息计算 `1000 * min(4, 1 + sqrt(Unicode字符数 / 50))` 毫秒。无逐字动画。
 
-同一 localStorage 快照保存已显示消息和 active.nextIndex；气泡 ID 为轮次 ID 加索引，重复写入被去重。刷新后：
+同一 IndexedDB 快照原子保存已显示消息和 active.nextIndex；气泡 ID 为轮次 ID 加索引，重复写入被去重。刷新后：
 - Collecting 恢复未发送消息和截止时间。
 - Dispatching 继续未显示的已生成消息，不重新调用模型；当前剩余气泡延迟重新计时。
 - Generating 转为明确中断错误，只能手动重试；不自动重放可能已计费的请求。
@@ -61,11 +61,13 @@ pagehide/卸载取消本页定时器和请求并释放 Web Lock；pageshow 或�
 仅后端读取 worker/.dev.vars 的 OPENAI_API_KEY、OPENAI_MODEL、可选 OPENAI_MAX_OUTPUT_TOKENS（默认 8192，异常保护范围 256–32768）。使用 Responses 的 text.format JSON Schema，store:false；不缓存 API 响应。store:false 不等于承诺供应商完全不保留数据。未配置真实凭据、未执行付费调用、未部署云服务。
 
 ## 本地数据与兼容
-leivra.data.v1 仍为统一快照，原有 characters/conversations/messages/activeCharacterId 不变；新增可选 chatSettings、schedulerSnapshots。旧快照直接兼容，人物卡 schemaVersion 不变。消息、调度和会话均按稳定 ID 隔离，更名不改变历史关联。
+IndexedDB leivra-local v1 的 snapshots 对象仓库存放 current 和 before-restore 两个键。current 是版本化统一快照，包含 characters/conversations/messages/activeCharacterId、可选 chatSettings、theme、schedulerSnapshots。数组位置明确保存消息先后顺序，不以毫秒时间戳作唯一排序依据。人物卡 schemaVersion 不变；消息、调度和会话按稳定 ID 隔离，更名不改变历史关联。未来新增实体通过数据库版本升级迁移。
 
-每会话保留最近 500 条已显示消息，调度另保存未完成轮次。数据未加密；持久化接口允许异步提交，必须确认 Generating 快照写入成功后才能发起请求。写入失败会暂停调度，用户消息仅保留在当前页面，刷新可能丢失。已发起请求的轮次恢复为中断错误，不自动重发；手动重试使用新请求 ID，原轮次 ID 保持稳定。加载损坏/未知版本不覆盖原数据、不回退旧键；临时会话不允许修改原人物卡。
+消息不再按 500 条截断。数据未加密；统一异步写入队列在 IndexedDB 事务完成后才发布已保存状态，Generating 快照提交前不发起请求。写入失败会暂停调度并保留发送草稿。已发起请求的轮次恢复为中断错误，不自动重发；手动重试使用新请求 ID，原轮次 ID 保持稳定。加载损坏/未知版本不覆盖原数据、不回退旧键。
 
-旧键 leivra.prototype.messages.v1 只在新快照缺失时迁移，默认角色清空/删除会清理旧备份。删除先验证并保存新的完整快照，再同步取消目标任务和提交 UI；事件循环不会在这组同步操作之间派发消息。空联系人集合合法，刷新不重建默认人物。联系人侧栏及人物卡编辑复用现有 UI。
+首次仅在 IndexedDB 尚无 current 时读取旧 leivra.data.v1 或 leivra.prototype.messages.v1，先校验，再以 add 事务提交，读取校验 ID、内容、关联与数量。旧 localStorage 原件始终保留，后续不再写入。已有有效 current 优先；损坏的 current 不被旧来源覆盖。设置主题也在首次迁移时纳入快照。空联系人集合合法，刷新不重建默认人物。
+
+导出从同一只读事务读取完整快照，生成版本化 JSON。导入先校验格式、人物卡、会话、消息、调度引用和设置，再让用户确认。恢复时先停止本页调度，等待在途写入，同一读写事务将 current 原值保存在 before-restore 并替换 current；事务提交后重新读取校验。校验异常时尝试从 before-restore 回写。恢复后的 Generating 状态转为需手动重试的中断状态，不自动重复付费请求。Web Locks 继续限定写入所有权；不实现多页实时同步。
 
 ## 验证与后续
 Vitest 用假时钟和伪造 fetch 验证，不请求外部模型。浏览器专项测试使用强制空 bindings 的测试 Worker 验证真实本地运行时/代理，再拦截响应验证队列及长文；即使机器配置了密钥也不能触发付费请求。

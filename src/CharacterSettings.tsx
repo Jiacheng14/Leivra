@@ -5,7 +5,7 @@ import { downloadJson } from './download'
 
 interface Props {
   character: Character
-  onSave(changes: Omit<Character, 'id' | 'revision' | 'schemaVersion'>): void
+  onSave(changes: Omit<Character, 'id' | 'revision' | 'schemaVersion'>): void | Promise<void>
 }
 export default function CharacterSettings({ character, onSave }: Props) {
   const [editing, setEditing] = useState(false)
@@ -19,11 +19,11 @@ export default function CharacterSettings({ character, onSave }: Props) {
       <button type="button" onClick={() => downloadJson(character.id + '.json', exportCharacter(character))}>导出 JSON</button>
       <button type="button" onClick={() => { setDraft(character); setEditing(!editing); setStatus(''); setError('') }}>{editing ? '取消编辑' : '编辑'}</button>
     </div>
-    {editing && <form className="card-editor" onSubmit={e => {
+    {editing && <form className="card-editor" onSubmit={async e => {
       e.preventDefault(); setError(''); setStatus('')
       try {
         const { id: _id, schemaVersion: _schema, revision: _revision, ...changes } = draft
-        onSave({ ...changes, personality: character.sourceCardV2 ? changes.personality : changes.personality.filter(item => item.trim()) }); setEditing(false); setStatus('已保存')
+        await onSave({ ...changes, personality: character.sourceCardV2 ? changes.personality : changes.personality.filter(item => item.trim()) }); setEditing(false); setStatus('已保存')
       } catch (error) { setError(error instanceof Error ? error.message : '人物卡保存失败。') }
     }}>
       <label>名称<input aria-label="名称" value={draft.name} maxLength={80} required onChange={e => field('name', e.target.value)}/></label>

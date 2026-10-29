@@ -6,12 +6,13 @@ export class PageOwnership {
   private epoch = 0
   private abort?: AbortController
   private release?: () => void
+  private releasing?: Promise<void>
   private owned = false
   private failed = false
   constructor(
     private locks: Pick<LockManager, 'request'> | undefined,
     private onAcquire: () => void,
-    private onRelease: () => void,
+    private onRelease: () => void | Promise<void>,
     private onUnavailable: () => void
   ) {}
   get available() { return Boolean(this.locks) && !this.failed }
@@ -29,7 +30,7 @@ export class PageOwnership {
         await new Promise<void>(resolve => { this.release = resolve })
       } finally {
         this.release = undefined
-        if (this.owned) { this.owned = false; this.onRelease() }
+        if (this.owned) await this.relinquish()
       }
     }).catch(error => {
       if (error instanceof DOMException && error.name === 'AbortError') return
@@ -41,7 +42,16 @@ export class PageOwnership {
     this.epoch++
     this.abort?.abort()
     this.abort = undefined
-    if (this.owned) { this.owned = false; this.onRelease() }
-    this.release?.()
+    if (this.owned) void this.relinquish()
+    else if (!this.releasing) this.release?.()
+  }
+  private relinquish(): Promise<void> {
+    if (this.releasing) return this.releasing
+    this.owned = false
+    this.releasing = Promise.resolve().then(() => this.onRelease()).finally(() => {
+      this.release?.()
+      this.releasing = undefined
+    })
+    return this.releasing
   }
 }

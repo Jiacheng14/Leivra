@@ -1,61 +1,81 @@
 import { useEffect, useRef, useState } from 'react'
 import { addCharacter, editCharacter, importCharacter, removeCharacter } from './characters/cards'
-import { DEFAULT_CHARACTER_ID } from './characters/defaultLeivra'
 import { modelProvider } from './providers'
 import { conversationMessages, MAX_LENGTH, type Character, type LocalData } from './models'
-import { createInitialData, LEGACY_STORAGE_KEY, loadData, saveData } from './storage'
+import { openDatabase, initializeData, readData, replaceData, writeData } from './indexedDb'
 import { ConversationManager } from './scheduling/ConversationManager'
 import { DEFAULT_CHAT_SETTINGS, validateChatSettings, type ChatSettings } from './scheduling/settings'
 import { PageOwnership } from './pageOwnership'
+import { createBackup, type Backup } from './backup'
 
-const READ_ERROR = '本地数据无法读取，原记录不会被覆盖。请通过浏览器设置备份或修复站点数据。'
+const READ_ERROR = '本地数据无法读取，原记录不会被覆盖。请检查浏览器站点数据或从备份恢复。'
 const OWNER_ERROR = '此页面为只读。请关闭其他 Leivra 页面；取得写入权限后可继续聊天。'
 const LOCK_ERROR = '当前 HTTP 环境不支持安全的页面锁，聊天已设为只读。请在本机 localhost 或受信任的 HTTPS 环境使用。'
-function initialState() {
-  try { return { data: loadData(), error: '', blocked: false } }
-  catch { return { data: createInitialData([]), error: READ_ERROR, blocked: true } }
-}
+
 export function useChat() {
-  const [initial] = useState(initialState)
-  const [data, setData] = useState(initial.data)
+  const [data, setData] = useState<LocalData>(() => ({ schemaVersion: 1, activeCharacterId: null, characters: [], conversations: [], messages: [] }))
   const latestData = useRef(data)
-  const storageBlocked = useRef(initial.blocked)
-  const [error, setError] = useState(initial.error)
+  const database = useRef<IDBDatabase | null>(null)
+  const writes = useRef<Promise<void>>(Promise.resolve())
+  const [error, setError] = useState('')
   const [writable, setWritable] = useState(false)
+  const [restoreAvailable, setRestoreAvailable] = useState(false)
   const [draft, setDraftValue] = useState('')
+  const [settingsState, setSettingsState] = useState(() => validateChatSettings(DEFAULT_CHAT_SETTINGS))
   const manager = useRef<ConversationManager | null>(null)
   const owner = useRef<PageOwnership | null>(null)
   function requireStorage() {
-    if (storageBlocked.current) throw new Error(READ_ERROR)
+    if (!database.current) throw new Error(READ_ERROR)
     if (!owner.current?.isOwner) throw new Error(owner.current?.available ? OWNER_ERROR : LOCK_ERROR)
   }
   function publish(next: LocalData) { latestData.current = next; setData(next) }
-  function write(next: LocalData, durableFirst = false) {
-    requireStorage()
-    // Sending may keep a failed message visible; ignoring requires one durable state change first.
-    if (!durableFirst) publish(next)
-    try { saveData(next); if (durableFirst) publish(next); setError('') }
-    catch (cause) { setError('浏览器无法保存数据，回复已暂停。'); throw cause }
+  function mutate(update: (current: LocalData) => LocalData): Promise<void> {
+    const operation = writes.current.then(async () => {
+      requireStorage()
+      const next = update(latestData.current)
+      await writeData(database.current!, next)
+      publish(next)
+      setError('')
+    })
+    writes.current = operation.catch(() => {})
+    return operation.catch(cause => {
+      setError('浏览器无法保存数据，回复已暂停。')
+      throw cause
+    })
   }
   useEffect(() => {
     const coordinator = new PageOwnership(navigator.locks, () => {
-      try {
-        const fresh = loadData()
-        storageBlocked.current = false
-        publish(fresh)
-        setError(''); setWritable(true)
-        manager.current = new ConversationManager(modelProvider, () => latestData.current, write)
-        manager.current.start()
-      } catch {
-        storageBlocked.current = true
-        setError(READ_ERROR); setWritable(false)
-      }
-    }, () => {
+      void (async () => {
+        let opened: IDBDatabase | null = null
+        try {
+          opened = await openDatabase()
+          const fresh = await initializeData(opened)
+          if (!coordinator.isOwner) { opened.close(); return }
+          database.current = opened
+          setRestoreAvailable(true)
+          publish(fresh)
+          setSettingsState(validateChatSettings(fresh.chatSettings ?? DEFAULT_CHAT_SETTINGS))
+          setError(''); setWritable(true)
+          manager.current = new ConversationManager(modelProvider, () => latestData.current, () => { throw new Error('需要事务写入。') }, mutate)
+          manager.current.start()
+          if (navigator.storage?.persist) void navigator.storage.persist().catch(() => {})
+        } catch {
+          if (coordinator.isOwner && opened) { database.current = opened; setRestoreAvailable(true) }
+          else opened?.close()
+          setError(READ_ERROR); setWritable(false)
+        }
+      })()
+    }, async () => {
       manager.current?.dispose(); manager.current = null
+      await writes.current
+      database.current?.close(); database.current = null
+      setRestoreAvailable(false)
       setWritable(false)
       setError(owner.current?.available ? OWNER_ERROR : LOCK_ERROR)
     }, () => {
       manager.current?.dispose(); manager.current = null
+      database.current?.close(); database.current = null
+      setRestoreAvailable(false)
       setWritable(false); setError(LOCK_ERROR)
     })
     owner.current = coordinator
@@ -79,12 +99,10 @@ export function useChat() {
     setDraftValue(value)
     if (writable && conversation) manager.current?.get(conversation.id).inputActivity()
   }
-  function activate(id: string) {
+  async function activate(id: string) {
     try {
-      requireStorage()
-      const current = latestData.current
-      if (id === current.activeCharacterId || !current.characters.some(c => c.id === id)) return
-      write({ ...current, activeCharacterId: id }); setDraftValue('')
+      await mutate(current => current.characters.some(c => c.id === id) ? { ...current, activeCharacterId: id } : current)
+      setDraftValue('')
     } catch (cause) { setError(cause instanceof Error ? cause.message : OWNER_ERROR) }
   }
   async function send() {
@@ -94,52 +112,46 @@ export function useChat() {
       requireStorage()
       if (!manager.current) throw new Error(OWNER_ERROR)
       const saved = await manager.current.send(conversation.id, text)
-      setDraftValue('')
-      if (!saved) setError('消息暂存于当前页面，但本地保存失败；回复已暂停。')
+      if (saved) setDraftValue('')
+      else setError('消息未保存，草稿已保留；回复已暂停。')
     } catch (cause) { setError(cause instanceof Error ? cause.message : '消息发送失败。') }
   }
-  function saveCardData(next: LocalData, failure: string) {
-    requireStorage()
-    try { saveData(next) } catch { throw new Error(failure) }
-    publish(next); setError('')
-  }
-  function importCard(json: string) {
-    requireStorage()
-    const next = addCharacter(latestData.current, importCharacter(json))
-    saveCardData(next, '人物卡未保存：浏览器存储不可用或空间不足。')
+  async function importCard(json: string) {
+    await mutate(current => addCharacter(current, importCharacter(json)))
     setDraftValue('')
   }
-  function saveCard(changes: Omit<Character, 'id' | 'revision' | 'schemaVersion'>) {
-    requireStorage()
+  async function saveCard(changes: Omit<Character, 'id' | 'revision' | 'schemaVersion'>) {
     if (!character) throw new Error('请先添加联系人。')
-    saveCardData(editCharacter(latestData.current, character.id, changes), '人物卡未保存：浏览器存储不可用或空间不足。')
+    await mutate(current => editCharacter(current, character.id, changes))
   }
-  function clear() {
-    if (!character || !conversation) return
+  async function clear() {
+    if (!conversation) return
+    const id = conversation.id
+    manager.current?.cancel(id)
+    try { await mutate(current => ({ ...current, messages: current.messages.filter(m => m.conversationId !== id), schedulerSnapshots: current.schedulerSnapshots?.filter(s => s.conversationId !== id) })) }
+    catch (cause) { manager.current?.get(id); throw cause }
+    setDraftValue('')
+  }
+  async function deleteContact(id: string) {
+    const removed = latestData.current.conversations.filter(c => c.characterId === id)
+    for (const c of removed) manager.current?.cancel(c.id)
+    try { await mutate(current => removeCharacter(current, id)) }
+    catch (cause) { for (const c of removed) manager.current?.get(c.id); throw cause }
+    if (character?.id === id) setDraftValue('')
+  }
+  async function configure(settings: ChatSettings) {
     try {
       requireStorage()
-      const current = latestData.current
-      const next = { ...current, messages: current.messages.filter(m => m.conversationId !== conversation.id), schedulerSnapshots: current.schedulerSnapshots?.filter(s => s.conversationId !== conversation.id) }
-      saveData(next)
-      manager.current?.cancel(conversation.id)
-      publish(next); setDraftValue(''); setError('')
-      if (character.id === DEFAULT_CHARACTER_ID) localStorage.removeItem(LEGACY_STORAGE_KEY)
-    } catch { setError('无法清除浏览器存储或此页面无写入权限。') }
-  }
-  function deleteContact(id: string) {
-    requireStorage()
-    const current = latestData.current, next = removeCharacter(current, id)
-    saveCardData(next, '联系人未删除：浏览器存储不可用，请重试。')
-    for (const c of current.conversations.filter(c => c.characterId === id)) manager.current?.cancel(c.id)
-    if (current.activeCharacterId === id) setDraftValue('')
-    if (id === DEFAULT_CHARACTER_ID) {
-      try { localStorage.removeItem(LEGACY_STORAGE_KEY) }
-      catch { setError('联系人已删除，但旧版聊天备份无法清理。请通过浏览器设置删除该站点的旧版备份。') }
+      const validated = validateChatSettings(settings)
+      setSettingsState(validated)
+      await manager.current?.configure(validated)
+    } catch (cause) {
+      setSettingsState(validateChatSettings(latestData.current.chatSettings ?? DEFAULT_CHAT_SETTINGS))
+      setError(cause instanceof Error ? cause.message : OWNER_ERROR)
     }
   }
-  function configure(settings: ChatSettings) {
-    try { requireStorage(); manager.current?.configure(settings) }
-    catch (cause) { setError(cause instanceof Error ? cause.message : OWNER_ERROR) }
+  async function setThemePreference(theme: 'light' | 'dark') {
+    await mutate(current => ({ ...current, theme }))
   }
   function retry() {
     if (!conversation || !manager.current) return
@@ -151,7 +163,42 @@ export function useChat() {
     try { requireStorage(); await manager.current.get(conversation.id).ignoreModeSwitch() }
     catch (cause) { setError(cause instanceof Error ? cause.message : OWNER_ERROR) }
   }
+  async function exportBackup(): Promise<Backup> {
+    requireStorage()
+    await writes.current
+    return createBackup(await readData(database.current!))
+  }
+  async function restoreBackup(backup: Backup): Promise<void> {
+    requireStorage()
+    setWritable(false)
+    manager.current?.dispose(); manager.current = null
+    await writes.current
+    let valid = false
+    try {
+      await replaceData(database.current!, backup.data)
+      const fresh = await readData(database.current!)
+      publish(fresh); setDraftValue(''); setError('')
+      setSettingsState(validateChatSettings(fresh.chatSettings ?? DEFAULT_CHAT_SETTINGS))
+      valid = true
+      setWritable(true)
+    } catch (cause) {
+      try {
+        const fresh = await readData(database.current!)
+        publish(fresh)
+        setSettingsState(validateChatSettings(fresh.chatSettings ?? DEFAULT_CHAT_SETTINGS))
+        valid = true; setWritable(true)
+      }
+      catch { setWritable(false) }
+      throw cause
+    } finally {
+      if (valid) {
+        manager.current = new ConversationManager(modelProvider, () => latestData.current, () => { throw new Error('需要事务写入。') }, mutate)
+        manager.current.start()
+      }
+    }
+  }
   return { data, character, conversation, messages, error, writable, draft, setDraft, busy, send, activate, importCard, saveCard, clear, deleteContact,
-    chatSettings: validateChatSettings(data.chatSettings ?? DEFAULT_CHAT_SETTINGS), configure,
-    replyError: currentSnapshot?.error, canIgnoreModeSwitch: currentSnapshot?.pauseReason === 'mode-switch', retry, ignoreModeSwitch }
+    chatSettings: settingsState, configure,
+    replyError: currentSnapshot?.error, canIgnoreModeSwitch: currentSnapshot?.pauseReason === 'mode-switch', retry, ignoreModeSwitch,
+    exportBackup, restoreBackup, setThemePreference, restoreAvailable }
 }

@@ -75,12 +75,12 @@ describe('scoped local data and migration', () => {
       expect(s.getItem(DATA_STORAGE_KEY)).toBe(raw)
     }
   })
-  it('trims only the target conversation at 500 messages', () => {
+  it('preserves all messages beyond the former 500-message limit', () => {
     let data=addCharacter(createInitialData([]),second());const [a,b]=data.conversations
     data=appendMessages(data,b,[createMessage(b,'user','保留 B')])
     data=appendMessages(data,a,Array.from({length:501},(_,i)=>createMessage(a,'user',String(i))))
-    expect(conversationMessages(data,a)).toHaveLength(500)
-    expect(conversationMessages(data,a)[0].text).toBe('1')
+    expect(conversationMessages(data,a)).toHaveLength(501)
+    expect(conversationMessages(data,a)[0].text).toBe('0')
     expect(conversationMessages(data,b)[0].text).toBe('保留 B')
   })
   it('reports storage write failures to the caller', () => {

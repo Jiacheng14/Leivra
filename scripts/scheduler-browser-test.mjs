@@ -1,6 +1,6 @@
 import { resolve } from 'node:path'
 import assert from 'node:assert/strict'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, access } from 'node:fs/promises'
 import { chromium } from 'playwright'
 import { startNode,stopChild,waitForServer } from './local-process.mjs'
 process.env.WRANGLER_LOG_PATH=resolve('work/wrangler-logs')
@@ -15,20 +15,50 @@ try {
   assert.deepEqual(await (await fetch('http://127.0.0.1:8791/__leivra_test_worker')).json(),{testWorker:true})
   server=startNode(['node_modules/vite/bin/vite.js','--mode','real','--host','127.0.0.1','--port','5179','--strictPort'])
   await waitForServer('http://127.0.0.1:5179',server)
-  browser=await chromium.launch({headless:true})
+  let bundled=true
+  try { await access(chromium.executablePath()) } catch { bundled=false }
+  browser=await chromium.launch({headless:true,...(bundled?{}:{channel:'chrome'})})
   const errors=[]
   for(const width of [1440,390]){
     const context=await browser.newContext({viewport:{width,height:900},isMobile:width===390,hasTouch:width===390})
     const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message))
     await page.goto('http://127.0.0.1:5179')
-    const send=async text=>{await page.getByRole('textbox',{name:'消息',exact:true}).fill(text);await page.getByRole('button',{name:'发送消息',exact:true}).click()}
-    const data=()=>page.evaluate(()=>JSON.parse(localStorage.getItem('leivra.data.v1')))
+    const data=()=>page.evaluate(()=>new Promise((resolve,reject)=>{
+      const open=indexedDB.open('leivra-local')
+      open.onerror=()=>reject(open.error)
+      open.onsuccess=()=>{
+        const db=open.result,tx=db.transaction('snapshots','readonly'),get=tx.objectStore('snapshots').get('current')
+        get.onsuccess=()=>resolve(get.result);get.onerror=()=>reject(get.error);tx.oncomplete=()=>db.close()
+      }
+    }))
+    const waitPhase=async phase=>{
+      for(let i=0;i<100;i++){
+        if((await data()).schedulerSnapshots?.[0]?.phase===phase)return
+        await new Promise(resolve=>setTimeout(resolve,20))
+      }
+      throw new Error('Scheduler did not reach '+phase)
+    }
+    const send=async text=>{
+      await page.getByRole('textbox',{name:'消息',exact:true}).fill(text)
+      await page.getByRole('button',{name:'发送消息',exact:true}).click()
+      for(let i=0;i<100;i++){
+        if((await data()).messages.some(m=>m.text===text))return
+        await new Promise(resolve=>setTimeout(resolve,20))
+      }
+      throw new Error('Message was not committed: '+text)
+    }
+    await page.waitForFunction(()=>!document.querySelector('textarea[aria-label="消息"]')?.disabled)
     await page.getByRole('button',{name:'聊天设置'}).click()
     assert.equal(await page.getByLabel('回复等待时间').inputValue(),'5')
     assert.equal(await page.getByLabel('回复等待时间').getAttribute('step'),'1')
     assert.equal(await page.getByLabel('正在输入时延后回复').isChecked(),false)
     await page.getByLabel('回复等待时间').fill('1')
     await page.getByLabel('正在输入时延后回复').check()
+    for(let i=0;i<100;i++){
+      const saved=(await data()).chatSettings
+      if(saved?.replyWaitMs===1000 && saved.deferWhileTyping)break
+      await new Promise(resolve=>setTimeout(resolve,20))
+    }
     await page.screenshot({path:'test-results/timing-settings-'+width+'.png',fullPage:true})
     await page.getByRole('button',{name:'关闭设置'}).click();await page.reload()
     assert.deepEqual((await data()).chatSettings,{replyWaitMs:1000,deferWhileTyping:true,maxWaitMs:300000})
@@ -49,7 +79,7 @@ try {
       await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({messages:calls.length===1?['首条','长段\n\n'+'文字'.repeat(2000),'尾条']:['下一轮回复']})})
     })
     await page.getByRole('button',{name:'重试回复',exact:true}).click()
-    await page.waitForFunction(()=>JSON.parse(localStorage.getItem('leivra.data.v1')).schedulerSnapshots[0].phase==='Generating')
+    await waitPhase('Generating')
     await send('下一轮甲');await send('下一轮乙');await send('下一轮丙')
     assert.equal(calls.length,1)
     assert.equal(calls[0].currentMessages.length,1)
@@ -73,7 +103,7 @@ try {
     let attempted=0
     await page.route('**/api/chat',async route=>{attempted++;await new Promise(resolve=>setTimeout(resolve,2500));await route.abort().catch(()=>{})})
     await send('刷新时中断')
-    await page.waitForFunction(()=>JSON.parse(localStorage.getItem('leivra.data.v1')).schedulerSnapshots[0].phase==='Generating')
+    await waitPhase('Generating')
     await page.reload()
     await page.getByRole('alert').filter({hasText:'上次生成已中断'}).waitFor()
     await page.waitForTimeout(3000);assert.equal(attempted,1)

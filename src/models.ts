@@ -51,6 +51,7 @@ export interface ModelProvider {
 }
 export interface LocalData {
   schemaVersion: 1
+  theme?: 'light' | 'dark'
   activeCharacterId: string | null
   characters: Character[]
   conversations: Conversation[]

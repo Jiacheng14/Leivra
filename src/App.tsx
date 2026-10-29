@@ -7,19 +7,23 @@ import { useChat } from './useChat'
 import CharacterSettings from './CharacterSettings'
 import ContactsSidebar from './ContactsSidebar'
 import { downloadJson } from './download'
+import { backupFilename, parseBackup, type Backup } from './backup'
 
 function initialTheme(): 'light' | 'dark' {
-  try { const v = localStorage.getItem('leivra.theme'); if (v === 'dark' || v === 'light') return v } catch { /* session fallback */ }
   return matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 }
 const clock = (time: number) => new Date(time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 export default function App() {
-  const { data, character, conversation, messages, error, writable, draft, setDraft, busy, send: sendMessage, activate, importCard, saveCard, clear: clearMessages, deleteContact, chatSettings, configure, replyError, canIgnoreModeSwitch, retry, ignoreModeSwitch } = useChat()
+  const { data, character, conversation, messages, error, writable, restoreAvailable, draft, setDraft, busy, send: sendMessage, activate, importCard, saveCard, clear: clearMessages, deleteContact, chatSettings, configure, replyError, canIgnoreModeSwitch, retry, ignoreModeSwitch, exportBackup, restoreBackup, setThemePreference } = useChat()
   const [theme, setTheme] = useState(initialTheme)
   const [settings, setSettings] = useState(false)
   const [contactsOpen, setContactsOpen] = useState(false)
   const closeContacts = useCallback(() => setContactsOpen(false), [])
   const [confirmClear, setConfirmClear] = useState(false)
+  const [restoreCandidate, setRestoreCandidate] = useState<Backup | null>(null)
+  const [backupError, setBackupError] = useState('')
+  const [restoring, setRestoring] = useState(false)
+  const backupFile = useRef<HTMLInputElement>(null)
   const [atBottom, setAtBottom] = useState(true)
   const [offline, setOffline] = useState(!navigator.onLine)
   const feed = useRef<HTMLDivElement>(null)
@@ -31,8 +35,8 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#202923' : '#78917e')
-    try { localStorage.setItem('leivra.theme', theme) } catch { /* theme remains usable for this session */ }
   }, [theme])
+  useEffect(() => { if (data.theme) setTheme(data.theme) }, [data.theme])
   useEffect(() => {
     if (nearBottom.current) feed.current?.scrollTo({ top: feed.current.scrollHeight, behavior: 'smooth' })
   }, [messages, busy])
@@ -58,12 +62,22 @@ export default function App() {
     nearBottom.current = true; setAtBottom(true)
     feed.current?.scrollTo({ top: feed.current.scrollHeight })
   }, [character?.id, character?.name])
-  function clear() {
-    clearMessages(); setConfirmClear(false); setSettings(false); nearBottom.current = true
+  async function clear() {
+    try { await clearMessages(); setConfirmClear(false); setSettings(false); nearBottom.current = true }
+    catch (cause) { setBackupError(cause instanceof Error ? cause.message : '清空失败。') }
   }
-  function exportMessages() {
-    if (!character || !conversation) return
-    downloadJson('leivra-messages.json', JSON.stringify({ version: 2, exportedAt: new Date().toISOString(), characterId: character.id, conversation, messages }, null, 2))
+  async function exportCompleteBackup() {
+    try { setBackupError(''); downloadJson(backupFilename(), JSON.stringify(await exportBackup(), null, 2)) }
+    catch (cause) { setBackupError(cause instanceof Error ? cause.message : '备份导出失败。') }
+  }
+  async function confirmRestore() {
+    if (!restoreCandidate || restoring) return
+    setRestoring(true)
+    try {
+      await restoreBackup(restoreCandidate)
+      setRestoreCandidate(null); setBackupError(''); setSettings(false); nearBottom.current = true
+    } catch (cause) { setBackupError(cause instanceof Error ? cause.message : '恢复失败，原有数据已保留。') }
+    finally { setRestoring(false) }
   }
   return <div className="app-shell">
     <ContactsSidebar characters={data.characters} activeId={data.activeCharacterId} open={contactsOpen} onClose={closeContacts} onSelect={activate} onImport={importCard} onDelete={deleteContact}/>
@@ -73,7 +87,7 @@ export default function App() {
         {character && <img className="header-avatar" src={character.avatar} alt={character.name + '头像'}/>}
         <div className="flex-1 min-w-0"><h1><span className="role-name">{character?.name ?? 'Leivra'}</span>{character && <span className="desktop-tag">LEIVRA</span>}</h1>{offline && <p>{isRealMode ? '离线 · 真实回复需要网络' : '离线 · 本地模拟仍可使用'}</p>}</div>
         <span className="prototype-badge">本地原型</span>
-        <button className="icon-button" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} aria-label={theme === 'light' ? '切换深色主题' : '切换浅色主题'}>{theme === 'light' ? <Moon size={20}/> : <Sun size={20}/>}</button>
+        <button className="icon-button" disabled={!writable} onClick={() => void setThemePreference(theme === 'light' ? 'dark' : 'light').catch(() => {})} aria-label={theme === 'light' ? '切换深色主题' : '切换浅色主题'}>{theme === 'light' ? <Moon size={20}/> : <Sun size={20}/>}</button>
         <button ref={settingsButton} className="icon-button" aria-label="聊天设置" onClick={() => setSettings(true)}><Settings2 size={20}/></button>
       </header>
       {replyError && <div role="alert" className="error-banner reply-error-banner"><span>{replyError}</span><button onClick={retry} disabled={!writable}>重试回复</button>{canIgnoreModeSwitch && <button type="button" className="ignore-button" aria-label="忽略待回复任务" disabled={!writable} onClick={() => void ignoreModeSwitch()}><X size={16}/></button>}</div>}
@@ -105,10 +119,10 @@ export default function App() {
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229 && !matchMedia('(pointer: coarse)').matches) { e.preventDefault(); void send() } }}/>
           <button type="submit" className="send-button" disabled={!writable || !draft.trim()} aria-label="发送消息"><span>发送</span><ArrowUp size={18}/></button>
         </form>
-        <div className="composer-bottom"><span><ShieldCheck size={12}/> {isRealMode ? '记录保存在本机；回复时将相关上下文发送至 OpenAI' : '原型消息暂存于此浏览器，不会上传'}</span><span>{draft.length}/{MAX_LENGTH}</span></div>
+        <div className="composer-bottom"><span><ShieldCheck size={12}/> {isRealMode ? '记录保存在本机；回复时将相关上下文发送至 OpenAI' : '消息保存在此浏览器，不会上传'}</span><span>{draft.length}/{MAX_LENGTH}</span></div>
       </footer>}
     </main>
-    <dialog ref={dialog} onCancel={() => { setSettings(false); setConfirmClear(false) }} onClose={() => { setSettings(false); settingsButton.current?.focus() }} className="settings-dialog">
+    <dialog ref={dialog} onCancel={() => { setSettings(false); setConfirmClear(false); setRestoreCandidate(null) }} onClose={() => { setSettings(false); setRestoreCandidate(null); settingsButton.current?.focus() }} className="settings-dialog">
       <div className="dialog-heading"><h2>聊天设置</h2><button className="icon-button" aria-label="关闭设置" onClick={() => { setSettings(false); setConfirmClear(false) }}><X size={20}/></button></div>
       {character && <div className="profile-card"><img src={character.avatar} alt={character.name + '头像'}/><div><strong>{character.name}</strong><p>{character.speakingStyle}</p></div></div>}
       <p className="settings-description">{isRealMode ? '当前使用 OpenAI API，按用量计费。人物卡与当前会话的近期上下文经本地后端发送；没有长期记忆。失败不会切换为模拟回复。' : '当前是 UI 原型，回复为固定规则模拟，不具备真实理解或长期记忆。人物卡可在下方编辑或导出，添加联系人请使用侧栏；Mock 不模拟自定义人格提示词。'}</p>
@@ -119,12 +133,21 @@ export default function App() {
         <input id="max-wait" type="range" min="1" max="10.5" step="0.5" value={chatSettings.maxWaitMs === null ? 10.5 : chatSettings.maxWaitMs / 60000} disabled={!writable} onChange={e=>configure({...chatSettings, maxWaitMs:Number(e.target.value) === 10.5 ? null : Number(e.target.value)*60000})}/>
         <label><input type="checkbox" checked={chatSettings.deferWhileTyping} disabled={!writable} onChange={e=>configure({...chatSettings,deferWhileTyping:e.target.checked})}/>正在输入时延后回复</label>
       </div>
-      <div className="privacy-card"><ShieldCheck size={20}/><div><strong>关于本地记录</strong><p>每个角色仅保留最近 500 条消息，未加密。共用浏览器的人可能查看记录；清理站点数据会使记录丢失。多标签页同步暂未支持。</p></div></div>
+      <div className="privacy-card"><ShieldCheck size={20}/><div><strong>关于本地记录</strong><p>记录保存在此浏览器的 IndexedDB，未加密。共用浏览器的人可能查看；清理站点数据仍可能使记录丢失，请妥善保存备份。多标签页同步暂未支持。</p></div></div>
+      <button className="setting-action" disabled={!writable || restoring} onClick={() => void exportCompleteBackup()}><Download size={18}/>导出完整备份 <span>JSON</span></button>
+      <button className="setting-action" disabled={!restoreAvailable || restoring} onClick={() => backupFile.current?.click()}>从备份恢复</button>
+      <input ref={backupFile} className="contact-file" type="file" accept=".json,application/json" aria-label="选择 Leivra 备份" onChange={async e => {
+        const file = e.target.files?.[0]; e.target.value = ''
+        if (!file) return
+        try { setBackupError(''); setRestoreCandidate(parseBackup(await file.text())) }
+        catch (cause) { setRestoreCandidate(null); setBackupError(cause instanceof Error ? cause.message : '备份文件无效。') }
+      }}/>
+      {restoreCandidate && <div className="clear-confirm"><p>备份时间：{new Date(restoreCandidate.exportedAt).toLocaleString('zh-CN')}；角色 {restoreCandidate.data.characters.length}，会话 {restoreCandidate.data.conversations.length}，消息 {restoreCandidate.data.messages.length}。确认后将完整替换当前本地数据。</p><div><button disabled={restoring} onClick={() => setRestoreCandidate(null)}>取消</button><button className="danger" disabled={restoring} onClick={() => void confirmRestore()}>确认恢复</button></div></div>}
+      {backupError && <p role="alert" className="card-error">{backupError}</p>}
       {character && <>
         <CharacterSettings key={character.id} character={character} onSave={saveCard}/>
-        <button className="setting-action" onClick={exportMessages}><Download size={18}/>导出本地测试记录 <span>JSON</span></button>
         <button className="setting-action danger" onClick={() => setConfirmClear(true)}><Trash2 size={18}/>清空本地聊天</button>
-        {confirmClear && <div className="clear-confirm"><p>将删除当前角色在此浏览器中的测试消息，无法撤销。</p><div><button onClick={() => setConfirmClear(false)}>取消</button><button className="danger" onClick={clear}>确认清空</button></div></div>}
+        {confirmClear && <div className="clear-confirm"><p>将删除当前角色在此浏览器中的消息，无法撤销。</p><div><button onClick={() => setConfirmClear(false)}>取消</button><button className="danger" onClick={() => void clear()}>确认清空</button></div></div>}
       </>}
       <p className="version">LEIVRA · v0.1.0 · 慢慢来，就很好</p>
     </dialog>

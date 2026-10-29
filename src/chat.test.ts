@@ -19,9 +19,9 @@ describe('prototype persistence', () => {
     expect(() => decodeMessages('[{"role":"system"}]')).toThrow()
     expect(() => decodeMessages(JSON.stringify([{id:'x',role:'user',text:'a',createdAt:1e100}]))).toThrow()
   })
-  it('retains the most recent 500 messages in order', () => {
+  it('retains all legacy messages in order', () => {
     const rows = Array.from({length: 501}, (_, i) => ({id:String(i),role:'user',text:'hello',createdAt:1}))
-    expect(decodeMessages(JSON.stringify(rows))?.[0].id).toBe('1')
+    expect(decodeMessages(JSON.stringify(rows))?.[0].id).toBe('0')
   })
 })
 describe('mock provider', () => {
