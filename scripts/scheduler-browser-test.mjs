@@ -24,7 +24,8 @@ try {
     const send=async text=>{await page.getByRole('textbox',{name:'消息',exact:true}).fill(text);await page.getByRole('button',{name:'发送消息',exact:true}).click()}
     const data=()=>page.evaluate(()=>JSON.parse(localStorage.getItem('leivra.data.v1')))
     await page.getByRole('button',{name:'聊天设置'}).click()
-    assert.equal(await page.getByLabel('回复等待时间').inputValue(),'3.5')
+    assert.equal(await page.getByLabel('回复等待时间').inputValue(),'5')
+    assert.equal(await page.getByLabel('回复等待时间').getAttribute('step'),'1')
     assert.equal(await page.getByLabel('正在输入时延后回复').isChecked(),false)
     await page.getByLabel('回复等待时间').fill('1')
     await page.getByLabel('正在输入时延后回复').check()

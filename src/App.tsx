@@ -114,7 +114,7 @@ export default function App() {
       <p className="settings-description">{isRealMode ? '当前使用 OpenAI API，按用量计费。人物卡与当前会话的近期上下文经本地后端发送；没有长期记忆。失败不会切换为模拟回复。' : '当前是 UI 原型，回复为固定规则模拟，不具备真实理解或长期记忆。人物卡可在下方编辑或导出，添加联系人请使用侧栏；Mock 不模拟自定义人格提示词。'}</p>
       <div className="chat-timing-settings">
         <label htmlFor="reply-wait">回复等待时间 <output>{chatSettings.replyWaitMs / 1000} 秒</output></label>
-        <input id="reply-wait" type="range" min="1" max="60" step="0.5" value={chatSettings.replyWaitMs / 1000} disabled={!writable} onChange={e=>configure({...chatSettings, replyWaitMs:Number(e.target.value)*1000})}/>
+        <input id="reply-wait" type="range" min="1" max="60" step="1" value={chatSettings.replyWaitMs / 1000} disabled={!writable} onChange={e=>configure({...chatSettings, replyWaitMs:Number(e.target.value)*1000})}/>
         <label htmlFor="max-wait">最大等待时间 <output>{chatSettings.maxWaitMs === null ? '不限' : `${chatSettings.maxWaitMs / 60000} 分钟`}</output></label>
         <input id="max-wait" type="range" min="1" max="10.5" step="0.5" value={chatSettings.maxWaitMs === null ? 10.5 : chatSettings.maxWaitMs / 60000} disabled={!writable} onChange={e=>configure({...chatSettings, maxWaitMs:Number(e.target.value) === 10.5 ? null : Number(e.target.value)*60000})}/>
         <label><input type="checkbox" checked={chatSettings.deferWhileTyping} disabled={!writable} onChange={e=>configure({...chatSettings,deferWhileTyping:e.target.checked})}/>正在输入时延后回复</label>

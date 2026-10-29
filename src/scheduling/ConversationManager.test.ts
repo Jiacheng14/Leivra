@@ -89,7 +89,7 @@ it('waits for the manager writer to confirm the generating snapshot',async()=>{
   })
   manager.start()
   await manager.send(data.conversations[0].id,'hello')
-  await vi.advanceTimersByTimeAsync(3500)
+  await vi.advanceTimersByTimeAsync(5000)
   expect(provider.reply).not.toHaveBeenCalled()
   expect(data.schedulerSnapshots?.[0]?.phase).toBe('Collecting')
   confirm(); await vi.advanceTimersByTimeAsync(0)
@@ -102,7 +102,7 @@ it('restores remaining long paragraphs without re-requesting or duplicate bubble
   const provider:ModelProvider={id:'test',reply:vi.fn(async()=>({messages:['短句',long,'完']}))}
   let manager=new ConversationManager(provider,()=>data,next=>{data=validateData(next)})
   manager.start();manager.send(data.conversations[0].id,'聊聊')
-  await vi.advanceTimersByTimeAsync(3500)
+  await vi.advanceTimersByTimeAsync(5000)
   expect(data.messages.map(m=>m.text)).toEqual(['聊聊','短句'])
   manager.dispose();data=validateData(JSON.parse(JSON.stringify(data)))
   manager=new ConversationManager(provider,()=>data,next=>{data=validateData(next)});manager.start()
@@ -120,7 +120,7 @@ it('keeps next-round and other-character messages out of a running request',asyn
   const provider:ModelProvider={id:'test',reply:vi.fn(()=>new Promise<{messages:string[]}>(r=>{resolve=r}))}
   const manager=new ConversationManager(provider,()=>data,next=>{data=validateData(next)})
   manager.start();manager.send(data.conversations[0].id,'第一轮')
-  await vi.advanceTimersByTimeAsync(3500)
+  await vi.advanceTimersByTimeAsync(5000)
   manager.send(data.conversations[0].id,'下一轮')
   manager.send(data.conversations[1].id,'其他角色秘密')
   const request=vi.mocked(provider.reply).mock.calls[0][0]
@@ -177,7 +177,7 @@ it('ignores only the selected mode-switched queue, persists it, and excludes it 
   manager=new ConversationManager(real,()=>data,next=>{data=validateData(next)})
   manager.start();await vi.advanceTimersByTimeAsync(0)
   await manager.send(first,'新的消息')
-  await vi.advanceTimersByTimeAsync(3500)
+  await vi.advanceTimersByTimeAsync(5000)
   expect(real.reply).toHaveBeenCalledTimes(1)
   const request=vi.mocked(real.reply).mock.calls[0][0]
   expect(request.input.currentMessages.map(m=>m.text)).toEqual(['新的消息'])
@@ -208,7 +208,7 @@ it('continues undisplayed output while ignoring only the next queued group after
   const first:ModelProvider={id:'mock',reply:vi.fn(async()=>({messages:['一','二']}))}
   let manager=new ConversationManager(first,()=>data,next=>{data=validateData(next)})
   manager.start();const id=data.conversations[0].id
-  await manager.send(id,'已生成的消息');await vi.advanceTimersByTimeAsync(3500)
+  await manager.send(id,'已生成的消息');await vi.advanceTimersByTimeAsync(5000)
   await manager.send(id,'放弃下一组');manager.dispose()
   const real:ModelProvider={id:'real',reply:vi.fn(async()=>({messages:['unexpected']}))}
   manager=new ConversationManager(real,()=>data,next=>{data=validateData(next)})
@@ -225,7 +225,7 @@ it('holds the next queue after restoring dispatch in a different provider mode',
   let data=createInitialData([])
   const first:ModelProvider={id:'mock',reply:vi.fn(async()=>({messages:['一','二']}))}
   let manager=new ConversationManager(first,()=>data,next=>{data=validateData(next)})
-  manager.start();manager.send(data.conversations[0].id,'第一组');await vi.advanceTimersByTimeAsync(3500)
+  manager.start();manager.send(data.conversations[0].id,'第一组');await vi.advanceTimersByTimeAsync(5000)
   manager.send(data.conversations[0].id,'第二组');manager.dispose()
   const real:ModelProvider={id:'real',reply:vi.fn(async()=>({messages:['第三条']}))}
   manager=new ConversationManager(real,()=>data,next=>{data=validateData(next)});manager.start()
@@ -246,7 +246,7 @@ it('restores collection once and rejects foreign/corrupt persisted scheduling da
   const badIndex=structuredClone(data);badIndex.schedulerSnapshots![0].phase='Dispatching'
   expect(()=>validateData(badIndex)).toThrow()
   manager=new ConversationManager(provider,()=>data,next=>{data=validateData(next)});manager.start()
-  await vi.advanceTimersByTimeAsync(2499);expect(provider.reply).not.toHaveBeenCalled()
+  await vi.advanceTimersByTimeAsync(3999);expect(provider.reply).not.toHaveBeenCalled()
   await vi.advanceTimersByTimeAsync(10000);expect(provider.reply).toHaveBeenCalledTimes(1)
   expect(data.messages.filter(m=>m.role==='user')).toHaveLength(1);manager.dispose()
 })

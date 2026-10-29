@@ -16,16 +16,16 @@ function setup(overrides: Partial<ConstructorParameters<typeof MessageScheduler>
   return {scheduler,generate,emitted,conversation,saved:()=>saved}
 }
 describe('message collection',()=>{
-  it('does not start generation before 3500ms from the last sent message',async()=>{
+  it('does not start generation before the default 5000ms from the last sent message',async()=>{
     const calls:{at:number;texts:string[]}[]=[]
     const t=setup({generate:async messages=>{calls.push({at:Date.now(),texts:messages.map(m=>m.text)});return {messages:['回复']}}})
     await t.scheduler.enqueue(createMessage(t.conversation,'user','第一条'))
     await vi.advanceTimersByTimeAsync(3000)
     t.scheduler.inputActivity()
-    await vi.advanceTimersByTimeAsync(490)
+    await vi.advanceTimersByTimeAsync(1990)
     expect(calls).toEqual([])
     await vi.advanceTimersByTimeAsync(10)
-    expect(calls).toEqual([{at:103500,texts:['第一条']}])
+    expect(calls).toEqual([{at:105000,texts:['第一条']}])
   })
   it('resets the deadline for a second sent message and keeps both bubbles',async()=>{
     const calls:{at:number;texts:string[]}[]=[]
@@ -33,10 +33,10 @@ describe('message collection',()=>{
     await t.scheduler.enqueue(createMessage(t.conversation,'user','第一条'))
     await vi.advanceTimersByTimeAsync(2000)
     await t.scheduler.enqueue(createMessage(t.conversation,'user','第二条'))
-    await vi.advanceTimersByTimeAsync(3490)
+    await vi.advanceTimersByTimeAsync(4990)
     expect(calls).toEqual([])
     await vi.advanceTimersByTimeAsync(10)
-    expect(calls).toEqual([{at:105500,texts:['第一条','第二条']}])
+    expect(calls).toEqual([{at:107000,texts:['第一条','第二条']}])
   })
   it('groups three separately sent messages once and resets the quiet timer',async()=>{
     const t=setup()
@@ -45,7 +45,7 @@ describe('message collection',()=>{
       await vi.advanceTimersByTimeAsync(2000)
     }
     expect(t.generate).not.toHaveBeenCalled()
-    await vi.advanceTimersByTimeAsync(1499);expect(t.generate).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(2999);expect(t.generate).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(1)
     expect(t.generate).toHaveBeenCalledTimes(1)
     expect(t.generate.mock.calls[0]).toBeDefined()
@@ -61,7 +61,7 @@ describe('message collection',()=>{
   it('ignores typing by default and waits the configured interval after activity',async()=>{
     const normal=setup();normal.scheduler.enqueue(createMessage(normal.conversation,'user','A'))
     await vi.advanceTimersByTimeAsync(3000);normal.scheduler.inputActivity()
-    await vi.advanceTimersByTimeAsync(500);expect(normal.generate).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(2000);expect(normal.generate).toHaveBeenCalledTimes(1)
     const t=setup({settings:{replyWaitMs:3500,deferWhileTyping:true}})
     t.scheduler.enqueue(createMessage(t.conversation,'user','B'))
     for(let i=0;i<13;i++){await vi.advanceTimersByTimeAsync(1000);t.scheduler.inputActivity()}
@@ -137,14 +137,14 @@ describe('per-conversation work',()=>{
       }})
     await scheduler.start()
     await scheduler.enqueue(createMessage(conversation,'user','第一条'))
-    await vi.advanceTimersByTimeAsync(3500)
+    await vi.advanceTimersByTimeAsync(5000)
     expect(calls).toEqual([])
     const second=scheduler.enqueue(createMessage(conversation,'user','第二条'))
     confirm(); await second
-    await vi.advanceTimersByTimeAsync(3490)
+    await vi.advanceTimersByTimeAsync(4990)
     expect(calls).toEqual([])
     await vi.advanceTimersByTimeAsync(10)
-    expect(calls).toEqual([{at:107000,texts:['第一条','第二条']}])
+    expect(calls).toEqual([{at:110000,texts:['第一条','第二条']}])
     scheduler.dispose()
   })
   it('honors typing deferral while a request is waiting for durable state',async()=>{
@@ -184,12 +184,12 @@ describe('per-conversation work',()=>{
       }})
     await scheduler.start()
     await scheduler.enqueue(createMessage(conversation,'user','第一条'))
-    await vi.advanceTimersByTimeAsync(3500)
-    scheduler.configure({replyWaitMs:5000,deferWhileTyping:false})
-    confirm(); await vi.advanceTimersByTimeAsync(1490)
+    await vi.advanceTimersByTimeAsync(5000)
+    scheduler.configure({replyWaitMs:6000,deferWhileTyping:false})
+    confirm(); await vi.advanceTimersByTimeAsync(990)
     expect(calls).toEqual([])
     await vi.advanceTimersByTimeAsync(10)
-    expect(calls).toEqual([105000])
+    expect(calls).toEqual([106000])
     scheduler.dispose()
   })
   it('waits for async persistence before a request and pauses on rejection',async()=>{
@@ -204,7 +204,7 @@ describe('per-conversation work',()=>{
       }})
     await scheduler.start()
     await scheduler.enqueue(createMessage(conversation,'user','hello'))
-    await vi.advanceTimersByTimeAsync(3500)
+    await vi.advanceTimersByTimeAsync(5000)
     expect(saved.at(-1)?.phase).toBe('Collecting')
     expect(generate).not.toHaveBeenCalled()
     rejectCommit(new Error('quota'))
@@ -216,7 +216,7 @@ describe('per-conversation work',()=>{
   it('keeps the round ID on recovery and uses a new request ID only for manual retry',async()=>{
     const first=setup({generate:()=>new Promise(()=>{})})
     await first.scheduler.enqueue(createMessage(first.conversation,'user','A'))
-    await vi.advanceTimersByTimeAsync(3500)
+    await vi.advanceTimersByTimeAsync(5000)
     const original=first.saved().active!.id
     first.scheduler.dispose()
     const retryGenerate=vi.fn(()=>new Promise<{messages:string[]}>(()=>{}))
@@ -237,9 +237,9 @@ describe('per-conversation work',()=>{
       return calls.length===1?await new Promise(resolve=>{complete=resolve}):{messages:['next']}
     },delayMs:()=>2000})
     t.scheduler.enqueue(createMessage(t.conversation,'user','A'))
-    await vi.advanceTimersByTimeAsync(3500)
+    await vi.advanceTimersByTimeAsync(5000)
     t.scheduler.enqueue(createMessage(t.conversation,'user','B'))
-    await vi.advanceTimersByTimeAsync(3500)
+    await vi.advanceTimersByTimeAsync(5000)
     expect(calls).toHaveLength(1);expect(firstSignal?.aborted).toBe(false)
     complete({messages:['one','two']});await vi.advanceTimersByTimeAsync(0)
     expect(t.emitted.map(m=>m.text)).toEqual(['one'])
@@ -247,32 +247,32 @@ describe('per-conversation work',()=>{
     await vi.advanceTimersByTimeAsync(2000)
     expect(t.emitted.map(m=>m.text)).toEqual(['one','two'])
     expect(calls).toHaveLength(1)
-    await vi.advanceTimersByTimeAsync(1500)
+    await vi.advanceTimersByTimeAsync(3000)
     expect(calls.map(batch=>batch.map(m=>m.text))).toEqual([['A'],['B','C']])
   })
   it('keeps separate conversations progressing independently',async()=>{
     const a=setup({generate:()=>new Promise(()=>{})}), b=setup()
     a.scheduler.enqueue(createMessage(a.conversation,'user','A'))
     b.scheduler.enqueue(createMessage(b.conversation,'user','B'))
-    await vi.advanceTimersByTimeAsync(3500)
+    await vi.advanceTimersByTimeAsync(5000)
     expect(a.saved().phase).toBe('Generating');expect(b.emitted).toHaveLength(1)
     a.scheduler.dispose()
   })
   it('reports failures/timeouts without automatic retries or losing the batch',async()=>{
     const t=setup({generate:async()=>{throw new Error('failed')}})
     t.scheduler.enqueue(createMessage(t.conversation,'user','A'))
-    await vi.advanceTimersByTimeAsync(4000)
+    await vi.advanceTimersByTimeAsync(5000)
     expect(t.saved().active?.messages[0].text).toBe('A')
     expect(t.saved().error).toBe('failed')
     await vi.advanceTimersByTimeAsync(30000);expect(t.saved().error).toBe('failed')
     const slow=setup({generate:()=>new Promise(()=>{}),timeoutMs:1000})
     slow.scheduler.enqueue(createMessage(slow.conversation,'user','slow'))
-    await vi.advanceTimersByTimeAsync(4500)
+    await vi.advanceTimersByTimeAsync(6000)
     expect(slow.saved().error).toContain('超时')
   })
   it('does not auto-regenerate an interrupted request on reload',async()=>{
     const t=setup({generate:()=>new Promise(()=>{})})
-    t.scheduler.enqueue(createMessage(t.conversation,'user','A'));await vi.advanceTimersByTimeAsync(3500)
+    t.scheduler.enqueue(createMessage(t.conversation,'user','A'));await vi.advanceTimersByTimeAsync(5000)
     const restored=t.saved();t.scheduler.dispose()
     const next=setup({conversationId:restored.conversationId,characterId:restored.characterId,restored})
     await vi.advanceTimersByTimeAsync(10000)
@@ -283,7 +283,7 @@ describe('per-conversation work',()=>{
   it('disposes timers and ignores late provider completions',async()=>{
     let finish!:(v:{messages:string[]})=>void
     const t=setup({generate:()=>new Promise(resolve=>{finish=resolve})})
-    t.scheduler.enqueue(createMessage(t.conversation,'user','A'));await vi.advanceTimersByTimeAsync(3500)
+    t.scheduler.enqueue(createMessage(t.conversation,'user','A'));await vi.advanceTimersByTimeAsync(5000)
     t.scheduler.dispose();finish({messages:['late']})
     await vi.advanceTimersByTimeAsync(10000)
     expect(t.emitted).toEqual([])
