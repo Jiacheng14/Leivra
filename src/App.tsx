@@ -14,7 +14,7 @@ function initialTheme(): 'light' | 'dark' {
 }
 const clock = (time: number) => new Date(time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 export default function App() {
-  const { data, character, conversation, messages, error, writable, restoreAvailable, draft, setDraft, busy, send: sendMessage, activate, importCard, saveCard, clear: clearMessages, deleteContact, chatSettings, configure, replyError, canIgnoreModeSwitch, retry, ignoreModeSwitch, exportBackup, restoreBackup, setThemePreference } = useChat()
+  const { data, character, conversation, messages, error, writable, restoreAvailable, draft, setDraft, busy, send: sendMessage, activate, importCard, saveCard, clear: clearMessages, deleteContact, chatSettings, configure, replyError, canIgnoreModeSwitch, retry, ignoreModeSwitch, exportBackup, exportRollbackBackup, restoreBackup, setThemePreference } = useChat()
   const [theme, setTheme] = useState(initialTheme)
   const [settings, setSettings] = useState(false)
   const [contactsOpen, setContactsOpen] = useState(false)
@@ -66,8 +66,8 @@ export default function App() {
     try { await clearMessages(); setConfirmClear(false); setSettings(false); nearBottom.current = true }
     catch (cause) { setBackupError(cause instanceof Error ? cause.message : '清空失败。') }
   }
-  async function exportCompleteBackup() {
-    try { setBackupError(''); downloadJson(backupFilename(), JSON.stringify(await exportBackup(), null, 2)) }
+  async function exportCompleteBackup(previous = false) {
+    try { setBackupError(''); downloadJson(previous ? backupFilename().replace('.json', '-before-restore.json') : backupFilename(), JSON.stringify(await (previous ? exportRollbackBackup() : exportBackup()), null, 2)) }
     catch (cause) { setBackupError(cause instanceof Error ? cause.message : '备份导出失败。') }
   }
   async function confirmRestore() {
@@ -80,7 +80,7 @@ export default function App() {
     finally { setRestoring(false) }
   }
   return <div className="app-shell">
-    <ContactsSidebar characters={data.characters} activeId={data.activeCharacterId} open={contactsOpen} onClose={closeContacts} onSelect={activate} onImport={importCard} onDelete={deleteContact}/>
+    <ContactsSidebar characters={data.characters} activeId={data.activeCharacterId} writable={writable} open={contactsOpen} onClose={closeContacts} onSelect={activate} onImport={importCard} onDelete={deleteContact}/>
     <main className="chat">
       <header className="chat-header">
         <button type="button" className="icon-button contacts-toggle" aria-label="打开联系人" aria-haspopup="dialog" aria-expanded={contactsOpen} onClick={() => setContactsOpen(true)}><Menu size={20}/></button>
@@ -135,8 +135,9 @@ export default function App() {
       </div>
       <div className="privacy-card"><ShieldCheck size={20}/><div><strong>关于本地记录</strong><p>记录保存在此浏览器的 IndexedDB，未加密。共用浏览器的人可能查看；清理站点数据仍可能使记录丢失，请妥善保存备份。多标签页同步暂未支持。</p></div></div>
       <button className="setting-action" disabled={!writable || restoring} onClick={() => void exportCompleteBackup()}><Download size={18}/>导出完整备份 <span>JSON</span></button>
+      <button className="setting-action" disabled={!restoreAvailable || restoring} onClick={() => void exportCompleteBackup(true)}>导出恢复前快照 <span>JSON</span></button>
       <button className="setting-action" disabled={!restoreAvailable || restoring} onClick={() => backupFile.current?.click()}>从备份恢复</button>
-      <input ref={backupFile} className="contact-file" type="file" accept=".json,application/json" aria-label="选择 Leivra 备份" onChange={async e => {
+      <input ref={backupFile} disabled={!restoreAvailable || restoring} className="contact-file" type="file" accept=".json,application/json" aria-label="选择 Leivra 备份" onChange={async e => {
         const file = e.target.files?.[0]; e.target.value = ''
         if (!file) return
         try { setBackupError(''); setRestoreCandidate(parseBackup(await file.text())) }
@@ -145,9 +146,9 @@ export default function App() {
       {restoreCandidate && <div className="clear-confirm"><p>备份时间：{new Date(restoreCandidate.exportedAt).toLocaleString('zh-CN')}；角色 {restoreCandidate.data.characters.length}，会话 {restoreCandidate.data.conversations.length}，消息 {restoreCandidate.data.messages.length}。确认后将完整替换当前本地数据。</p><div><button disabled={restoring} onClick={() => setRestoreCandidate(null)}>取消</button><button className="danger" disabled={restoring} onClick={() => void confirmRestore()}>确认恢复</button></div></div>}
       {backupError && <p role="alert" className="card-error">{backupError}</p>}
       {character && <>
-        <CharacterSettings key={character.id} character={character} onSave={saveCard}/>
-        <button className="setting-action danger" onClick={() => setConfirmClear(true)}><Trash2 size={18}/>清空本地聊天</button>
-        {confirmClear && <div className="clear-confirm"><p>将删除当前角色在此浏览器中的消息，无法撤销。</p><div><button onClick={() => setConfirmClear(false)}>取消</button><button className="danger" onClick={() => void clear()}>确认清空</button></div></div>}
+        <CharacterSettings key={character.id} character={character} writable={writable} onSave={saveCard}/>
+        <button className="setting-action danger" disabled={!writable} onClick={() => setConfirmClear(true)}><Trash2 size={18}/>清空本地聊天</button>
+        {confirmClear && <div className="clear-confirm"><p>将删除当前角色在此浏览器中的消息，无法撤销。</p><div><button onClick={() => setConfirmClear(false)}>取消</button><button className="danger" disabled={!writable} onClick={() => void clear()}>确认清空</button></div></div>}
       </>}
       <p className="version">LEIVRA · v0.1.0 · 慢慢来，就很好</p>
     </dialog>

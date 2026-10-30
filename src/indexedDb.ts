@@ -18,7 +18,6 @@ function completed(transaction: IDBTransaction): Promise<void> {
   return new Promise((resolve, reject) => {
     transaction.oncomplete = () => resolve()
     transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB 事务已中止。'))
-    transaction.onerror = () => reject(transaction.error ?? new Error('IndexedDB 事务失败。'))
   })
 }
 
@@ -42,8 +41,7 @@ export function openDatabase(): Promise<IDBDatabase> {
 async function readKey(database: IDBDatabase, key: string): Promise<LocalData | undefined> {
   const transaction = database.transaction(STORE, 'readonly')
   const done = completed(transaction)
-  const value: unknown = await requestValue(transaction.objectStore(STORE).get(key))
-  await done
+  const [value]: [unknown, void] = await Promise.all([requestValue(transaction.objectStore(STORE).get(key)), done])
   return value === undefined ? undefined : validateData(value)
 }
 
@@ -83,10 +81,16 @@ export async function replaceData(database: IDBDatabase, value: LocalData): Prom
   const done = completed(transaction)
   const store = transaction.objectStore(STORE)
   // The read and both writes share one transaction: a failed replacement leaves current intact.
-  const previous: unknown = await requestValue(store.get(CURRENT))
-  if (previous !== undefined) store.put(previous, ROLLBACK)
-  store.put(data, CURRENT)
-  await done
+  const replacement = requestValue(store.get(CURRENT)).then((previous: unknown) => {
+    try {
+      if (previous !== undefined) store.put(previous, ROLLBACK)
+      store.put(data, CURRENT)
+    } catch (cause) {
+      transaction.abort()
+      throw cause
+    }
+  })
+  await Promise.all([replacement, done])
   try {
     if (JSON.stringify(await readData(database)) !== JSON.stringify(data)) throw new Error('恢复后校验失败。')
   } catch (cause) {
@@ -104,8 +108,7 @@ export async function replaceData(database: IDBDatabase, value: LocalData): Prom
 async function readRawRollback(database: IDBDatabase): Promise<unknown> {
   const transaction = database.transaction(STORE, 'readonly')
   const done = completed(transaction)
-  const value: unknown = await requestValue(transaction.objectStore(STORE).get(ROLLBACK))
-  await done
+  const [value]: [unknown, void] = await Promise.all([requestValue(transaction.objectStore(STORE).get(ROLLBACK)), done])
   return value
 }
 export async function readRollbackData(database: IDBDatabase): Promise<LocalData | undefined> {

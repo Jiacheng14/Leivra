@@ -25,8 +25,8 @@ export function validateSnapshots(value: unknown, conversations: Conversation[])
     if (v.providerId !== undefined) result.providerId = stableId(v.providerId)
     if (v.error !== undefined) result.error = text(v.error, '错误信息', 500, true)
     if (v.pauseReason !== undefined) {
-      if (v.pauseReason !== 'mode-switch') throw new Error('暂停原因格式错误。')
-      result.pauseReason = 'mode-switch'
+      if (v.pauseReason !== 'mode-switch' && v.pauseReason !== 'backup-restore') throw new Error('暂停原因格式错误。')
+      result.pauseReason = v.pauseReason
     }
     if (v.active !== undefined) {
       const a = record(v.active), messages = batch(a.messages)

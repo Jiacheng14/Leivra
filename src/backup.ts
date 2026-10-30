@@ -1,6 +1,7 @@
 import type { LocalData } from './models'
 import { record } from './validation'
 import { validateData } from './storage'
+import { BACKUP_RESTORE_ERROR } from './scheduling/MessageScheduler'
 
 export interface Backup {
   format: 'leivra-backup'
@@ -11,6 +12,21 @@ export interface Backup {
 
 export function createBackup(data: LocalData, exportedAt = new Date().toISOString()): Backup {
   return { format: 'leivra-backup', backupVersion: 1, exportedAt, data: validateData(data) }
+}
+
+export function prepareRestore(data: LocalData): LocalData {
+  const restored = validateData(data)
+  // A historical backup cannot tell whether its queued work ran after export.
+  for (const snapshot of restored.schedulerSnapshots ?? []) {
+    const needsGeneration = snapshot.pending.length > 0 || (snapshot.active && !snapshot.active.output)
+    if (snapshot.active?.output) snapshot.phase = 'Dispatching'
+    else snapshot.phase = 'Idle'
+    if (needsGeneration) {
+      snapshot.error = BACKUP_RESTORE_ERROR
+      snapshot.pauseReason = 'backup-restore'
+    }
+  }
+  return validateData(restored)
 }
 
 export function parseBackup(raw: string): Backup {

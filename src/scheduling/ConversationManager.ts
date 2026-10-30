@@ -15,7 +15,7 @@ export class ConversationManager {
     const data = this.read(), conversation = data.conversations.find(c=>c.id===id)
     if (!conversation) throw new Error('会话不存在。')
     const restored = structuredClone(data.schedulerSnapshots?.find(s=>s.conversationId===id))
-    if (restored?.providerId && restored.providerId !== this.provider.id) {
+    if (restored?.providerId && restored.providerId !== this.provider.id && restored.pauseReason !== 'backup-restore') {
       if (restored.phase === 'Collecting') {
         restored.active = {id:newId(),messages:restored.pending,nextIndex:0}
         restored.pending=[];restored.phase='Idle'

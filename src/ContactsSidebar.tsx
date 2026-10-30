@@ -5,6 +5,7 @@ import type { Character } from './models'
 import { CARD_LIMIT_BYTES } from './characters/cards'
 
 interface Props {
+  writable: boolean
   characters: Character[]
   activeId: string | null
   open: boolean
@@ -13,7 +14,7 @@ interface Props {
   onImport(json: string): void | Promise<void>
   onDelete(id: string): void | Promise<void>
 }
-export default function ContactsSidebar({ characters, activeId, open, onClose, onSelect, onImport, onDelete }: Props) {
+export default function ContactsSidebar({ characters, activeId, writable, open, onClose, onSelect, onImport, onDelete }: Props) {
   const [mobile, setMobile] = useState(() => matchMedia('(max-width: 700px)').matches)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [error, setError] = useState('')
@@ -46,16 +47,16 @@ export default function ContactsSidebar({ characters, activeId, open, onClose, o
     </div>
     <h2 className="nav-label">联系人</h2>
     <div className="contact-list">{characters.map(contact => <div className="contact-entry" key={contact.id} data-character-id={contact.id}>
-      <button type="button" className={'conversation ' + (contact.id === activeId ? 'active' : '')} aria-label={'联系 ' + contact.name} aria-current={contact.id === activeId ? 'true' : undefined} onClick={() => { onSelect(contact.id); onClose() }}>
+      <button type="button" disabled={!writable} className={'conversation ' + (contact.id === activeId ? 'active' : '')} aria-label={'联系 ' + contact.name} aria-current={contact.id === activeId ? 'true' : undefined} onClick={() => { onSelect(contact.id); onClose() }}>
         <img src={contact.avatar} alt=""/><div><strong>{contact.name}</strong></div>{contact.id === activeId && <span className="presence"/>}
       </button>
-      <button type="button" className="icon-button contact-delete" aria-label={'删除联系人 ' + contact.name} onClick={e => {
+      <button type="button" disabled={!writable} className="icon-button contact-delete" aria-label={'删除联系人 ' + contact.name} onClick={e => {
         deleteTrigger.current = e.currentTarget
         setDeleteError(''); setDeletingId(contact.id)
       }}><Trash2 size={16}/></button>
     </div>)}</div>
-    <button ref={addButton} type="button" className="setting-action add-contact" onClick={() => fileInput.current?.click()}><Plus size={18}/>添加联系人</button>
-    <input ref={fileInput} className="contact-file" type="file" accept=".json,application/json" aria-label="导入人物卡" onChange={async e => {
+    <button ref={addButton} type="button" disabled={!writable} className="setting-action add-contact" onClick={() => fileInput.current?.click()}><Plus size={18}/>添加联系人</button>
+    <input ref={fileInput} disabled={!writable} className="contact-file" type="file" accept=".json,application/json" aria-label="导入人物卡" onChange={async e => {
       const file = e.target.files?.[0]; e.target.value = ''
       if (!file) return
       setError('')
@@ -80,7 +81,7 @@ export default function ContactsSidebar({ characters, activeId, open, onClose, o
       {deleteError && <p className="card-error" role="alert">{deleteError}</p>}
       <div className="delete-contact-actions">
         <button type="button" autoFocus onClick={closeConfirmation}>取消</button>
-        <button type="button" className="danger" onClick={async () => {
+        <button type="button" disabled={!writable} className="danger" onClick={async () => {
           if (!deleting) return
           try { await onDelete(deleting.id); closeConfirmation() }
           catch (error) { setDeleteError(error instanceof Error ? error.message : '联系人删除失败。') }

@@ -4,10 +4,11 @@ import { exportCharacter } from './characters/cards'
 import { downloadJson } from './download'
 
 interface Props {
+  writable: boolean
   character: Character
   onSave(changes: Omit<Character, 'id' | 'revision' | 'schemaVersion'>): void | Promise<void>
 }
-export default function CharacterSettings({ character, onSave }: Props) {
+export default function CharacterSettings({ character, writable, onSave }: Props) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(character)
   const [error, setError] = useState('')
@@ -17,7 +18,7 @@ export default function CharacterSettings({ character, onSave }: Props) {
     <summary>人物卡</summary>
     <div className="card-actions">
       <button type="button" onClick={() => downloadJson(character.id + '.json', exportCharacter(character))}>导出 JSON</button>
-      <button type="button" onClick={() => { setDraft(character); setEditing(!editing); setStatus(''); setError('') }}>{editing ? '取消编辑' : '编辑'}</button>
+      <button type="button" disabled={!writable} onClick={() => { setDraft(character); setEditing(!editing); setStatus(''); setError('') }}>{editing ? '取消编辑' : '编辑'}</button>
     </div>
     {editing && <form className="card-editor" onSubmit={async e => {
       e.preventDefault(); setError(''); setStatus('')
@@ -33,7 +34,7 @@ export default function CharacterSettings({ character, onSave }: Props) {
       <label>语言风格<textarea aria-label="语言风格" value={draft.speakingStyle} maxLength={4000} onChange={e => field('speakingStyle', e.target.value)}/></label>
       <label>关系设定<textarea aria-label="关系设定" value={draft.relationship} maxLength={4000} onChange={e => field('relationship', e.target.value)}/></label>
       <label>人格提示词<textarea aria-label="人格提示词" value={draft.customPrompt} maxLength={12000} onChange={e => field('customPrompt', e.target.value)}/></label>
-      <button type="submit" className="setting-action">保存人物卡</button>
+      <button type="submit" disabled={!writable} className="setting-action">保存人物卡</button>
     </form>}
     {error && <p role="alert" className="card-error">{error}</p>}
     {status && <p role="status">{status}</p>}

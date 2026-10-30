@@ -5,6 +5,7 @@ import { DEFAULT_CHAT_SETTINGS, validateChatSettings, type ChatSettings, type Va
 
 export type ConversationPhase = 'Idle' | 'Collecting' | 'Generating' | 'Dispatching'
 export const MODE_SWITCH_ERROR = '回复模式已更换，待处理消息未自动发送。可手动重试回复。'
+export const BACKUP_RESTORE_ERROR = '已恢复备份，待回复任务已暂停。确认需要生成后可手动重试回复。'
 export interface ActiveTurn {
   id: string
   // The round ID stays stable. A deliberate retry gets a new request ID.
@@ -22,7 +23,7 @@ export interface SchedulerSnapshot {
   lastSentAt: number
   active?: ActiveTurn
   error?: string
-  pauseReason?: 'mode-switch'
+  pauseReason?: 'mode-switch' | 'backup-restore'
 }
 interface Options {
   conversationId: string
@@ -82,7 +83,15 @@ export class MessageScheduler {
     this.state.pending.push(structuredClone(message))
     this.state.lastSentAt = Date.now()
     if (!this.state.active) this.state.phase = 'Collecting'
-    if (!await this.commit(message)) return false
+    if (!await this.commit(message)) {
+      // The history transaction did not commit. Do not leave an orphan in the queue.
+      this.state.pending = this.state.pending.filter(item => item.id !== message.id)
+      if (this.state.active && !this.requestStarted) {
+        this.state.active.messages = this.state.active.messages.filter(item => item.id !== message.id)
+        if (!this.state.active.messages.length) this.state.active = undefined
+      }
+      return false
+    }
     if (!this.closed) this.schedule()
     return true
   }
@@ -152,6 +161,7 @@ export class MessageScheduler {
     return true
   }
   private commit(emitted?: Message, ignoredMessageIds?: readonly string[], replacement?: SchedulerSnapshot): Promise<boolean> {
+    if (this.closed) return Promise.resolve(false)
     const snapshot = replacement ?? this.snapshot()
     const fail = () => {
       if (!this.closed) {
@@ -167,7 +177,10 @@ export class MessageScheduler {
         if (!result || typeof result.then !== 'function') return Promise.resolve(true)
         this.writes = result
       } else {
-        this.writes = this.writes.then(() => this.options.commit(snapshot, emitted, ignoredMessageIds))
+        this.writes = this.writes.then(() => {
+          if (this.closed) throw new Error('会话已关闭。')
+          return this.options.commit(snapshot, emitted, ignoredMessageIds)
+        })
       }
       const operation = this.writes
       void operation.finally(() => { if (this.writes === operation) this.writes = null }).catch(() => {})
@@ -227,7 +240,11 @@ export class MessageScheduler {
     if (!await this.commit({
       id: active.id + '-' + index, conversationId: this.state.conversationId,
       characterId: this.state.characterId, role: 'assistant', text, createdAt: Date.now()
-    })) return
+    })) {
+      // Subsequent queued commits also fail; retry this same bubble and stable ID.
+      active.nextIndex = index
+      return
+    }
     this.scheduleDispatch()
   }
   private scheduleDispatch() {
